@@ -118,3 +118,24 @@ struct __attribute__((packed)) TopoDependency {
   uint8_t  targetMac[6];
   uint32_t targetIPv4;  // network order
 };
+
+struct __attribute__((packed)) TopoSensorBundle {
+  uint8_t  sensIdx;        // 0..(ICM_MAX_SENSORS-1) or 0xFE/0xFF
+  uint8_t  targetIdx;      // relay index 0..N-1
+  uint8_t  targetMac[6];   // where THIS sensor should send triggers
+  uint8_t  targetTok16[16];// token that TARGET RELAY expects in header
+  uint32_t targetIPv4;     // network order
+};
+
+struct __attribute__((packed)) TopoRelayBundle {
+  uint8_t  myIdx;          // relay index 0..N-1
+  uint8_t  hasPrev;        // 0/1
+  uint8_t  prevSensIdx;    // sensor index (or FE/FF) that precedes this relay in chain
+  uint8_t  prevSensMac[6]; // previous sensor MAC
+  uint8_t  prevSensTok16[16]; // token that PREV SENSOR expects (for optional acks)
+  uint8_t  hasNext;        // 0/1
+  uint8_t  nextIdx;        // next relay index in chain
+  uint8_t  nextMac[6];     // next relay MAC
+  uint8_t  nextTok16[16];  // token that NEXT RELAY expects in header
+  uint32_t nextIPv4;       // next relay IPv4 (network order)
+};

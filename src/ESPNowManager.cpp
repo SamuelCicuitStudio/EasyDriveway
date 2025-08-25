@@ -1,6 +1,6 @@
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
- *  File        : ESPNowManager.cpp
+ *  File        : ESPNowManager.cpp (token- & topology-aware rewrite)
  **************************************************************/
 #include "ESPNowManager.h"
 
@@ -22,6 +22,9 @@ ESPNowManager::ESPNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc)
 bool ESPNowManager::begin(uint8_t channelDefault, const char* pmk16) {
   _channel = (uint8_t)_cfg->GetInt(keyCh().c_str(), (int)channelDefault);
   _mode    = (uint8_t)_cfg->GetInt(keyMd().c_str(), (int)MODE_AUTO);
+
+  // Try to load a saved topology mirror
+  loadTopologyFromNvs();
 
   WiFi.mode(WIFI_STA);
   esp_wifi_set_promiscuous(true);
@@ -81,12 +84,14 @@ void ESPNowManager::poll() {
 }
 
 // ============ Utilities ============
+
 bool ESPNowManager::macStrToBytes(const String& mac, uint8_t out[6]) {
   int v[6];
   if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &v[0],&v[1],&v[2],&v[3],&v[4],&v[5]) != 6) return false;
   for(int i=0;i<6;i++) out[i]=(uint8_t)v[i];
   return true;
 }
+
 String ESPNowManager::macBytesToStr(const uint8_t mac[6]) {
   char b[18];
   snprintf(b,sizeof(b),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
@@ -140,6 +145,11 @@ void ESPNowManager::tokenHexTo16(const String& hex, uint8_t out[16]) {
     out[i]=v;
   }
 }
+uint32_t ESPNowManager::takeAndBumpTokenCounter(){
+  uint32_t ctr = (uint32_t)_cfg->GetInt(keyCtr().c_str(), 1);
+  _cfg->PutInt(keyCtr().c_str(), (int)(ctr+1));
+  return ctr;
+}
 bool ESPNowManager::loadOrCreateToken(ModuleType t, uint8_t index, const String& macStr,String& tokenHexOut, uint8_t token16Out[16]) {
   String kTok = keyTok(t,index);
   String hex  = _cfg->GetString(kTok.c_str(), "");
@@ -148,7 +158,7 @@ bool ESPNowManager::loadOrCreateToken(ModuleType t, uint8_t index, const String&
     tokenHexTo16(hex, token16Out);
     return true;
   }
-  uint32_t ctr = (uint32_t)_cfg->GetInt(COUNTER_KEY, 1);
+  uint32_t ctr = takeAndBumpTokenCounter();
   String icm  = icmMacStr();
   tokenCompute(icm, macStr, ctr, hex);
   tokenHexOut = hex;
@@ -205,6 +215,16 @@ bool ESPNowManager::ensurePeer(ModuleType t, uint8_t index, PeerRec*& out) {
   return out != nullptr;
 }
 
+// Auto-index helpers
+uint8_t ESPNowManager::nextFreeRelayIndex() const {
+  for (uint8_t i=0;i<ICM_MAX_RELAYS;i++) if (!_relays[i].used) return i;
+  return 0xFF;
+}
+uint8_t ESPNowManager::nextFreeSensorIndex() const {
+  for (uint8_t i=0;i<ICM_MAX_SENSORS;i++) if (!_sensors[i].used) return i;
+  return 0xFF;
+}
+
 // ============ Pair/Unpair ============
 bool ESPNowManager::pairPower(const String& macStr) {
   uint8_t mac[6]; if(!macStrToBytes(macStr, mac)) return false;
@@ -248,6 +268,31 @@ bool ESPNowManager::pairPresenceParking(const String& macStr) {
   LOGI(1122,"Paired SENS[PARK] %s", macStr.c_str());
   return true;
 }
+bool ESPNowManager::pairRelayAuto(const String& macStr, uint8_t* outIdx){
+  // try NVS hint first, then fall back to first free
+  int hint = _cfg->GetInt(keyRNext().c_str(), 0);
+  for (int k=0;k<ICM_MAX_RELAYS;k++){
+    uint8_t idx = (hint + k) % ICM_MAX_RELAYS;
+    if (!_relays[idx].used) {
+      bool ok = pairRelay(idx, macStr);
+      if (ok) { _cfg->PutInt(keyRNext().c_str(), (int)((idx+1)%ICM_MAX_RELAYS)); if(outIdx)*outIdx=idx; }
+      return ok;
+    }
+  }
+  return false;
+}
+bool ESPNowManager::pairPresenceAuto(const String& macStr, uint8_t* outIdx){
+  int hint = _cfg->GetInt(keySNext().c_str(), 0);
+  for (int k=0;k<ICM_MAX_SENSORS;k++){
+    uint8_t idx = (hint + k) % ICM_MAX_SENSORS;
+    if (!_sensors[idx].used) {
+      bool ok = pairPresence(idx, macStr);
+      if (ok) { _cfg->PutInt(keySNext().c_str(), (int)((idx+1)%ICM_MAX_SENSORS)); if(outIdx)*outIdx=idx; }
+      return ok;
+    }
+  }
+  return false;
+}
 bool ESPNowManager::unpairByMac(const String& macStr) {
   uint8_t mac[6]; if(!macStrToBytes(macStr, mac)) return false;
   esp_now_del_peer(mac);
@@ -263,17 +308,18 @@ bool ESPNowManager::unpairByMac(const String& macStr) {
 
 // ============ High-level helpers requested by WiFiManager ============
 
-// "power", "relay3", "sensor2", "entrance", "parking"
 bool ESPNowManager::pair(const String& mac, const String& type) {
   String t = type; t.toLowerCase();
-  if (t == "power") return pairPower(mac);
+  if (t == "power")    return pairPower(mac);
   if (t == "entrance") return pairPresenceEntrance(mac);
   if (t == "parking")  return pairPresenceParking(mac);
   if (t.startsWith("relay")) {
+    if (t == "relay") return pairRelayAuto(mac);
     int idx = t.substring(5).toInt();
     return pairRelay((uint8_t)idx, mac);
   }
   if (t.startsWith("sensor")) {
+    if (t == "sensor") return pairPresenceAuto(mac);
     int idx = t.substring(6).toInt();
     return pairPresence((uint8_t)idx, mac);
   }
@@ -281,7 +327,6 @@ bool ESPNowManager::pair(const String& mac, const String& type) {
 }
 
 void ESPNowManager::removeAllPeers() {
-  // runtime esp-now peers
   if (_power.used)   { esp_now_del_peer(_power.mac);   memset(&_power,0,sizeof(_power)); }
   if (_entrance.used){ esp_now_del_peer(_entrance.mac);memset(&_entrance,0,sizeof(_entrance)); }
   if (_parking.used) { esp_now_del_peer(_parking.mac); memset(&_parking,0,sizeof(_parking)); }
@@ -300,11 +345,16 @@ void ESPNowManager::removeAllPeers() {
 
 void ESPNowManager::clearAll() {
   removeAllPeers();
-  // forget NVS MACs/tokens/mode/channel
+  // forget NVS MACs/tokens/mode/channel/topology
   _cfg->PutInt(keyCh().c_str(), 1);
   _cfg->PutInt(keyMd().c_str(), MODE_AUTO);
+  _cfg->PutString(keyTopo().c_str(), "");
+  _cfg->PutInt(keyRNext().c_str(), 0);
+  _cfg->PutInt(keySNext().c_str(), 0);
+  // Power
   _cfg->PutString(keyMac(ModuleType::POWER,0).c_str(), "");
   _cfg->PutString(keyTok(ModuleType::POWER,0).c_str(), "");
+  // Relays & Sensors
   for (uint8_t i=0;i<ICM_MAX_RELAYS;i++){
     _cfg->PutString(keyMac(ModuleType::RELAY,i).c_str(), "");
     _cfg->PutString(keyTok(ModuleType::RELAY,i).c_str(), "");
@@ -313,11 +363,12 @@ void ESPNowManager::clearAll() {
     _cfg->PutString(keyMac(ModuleType::PRESENCE,i).c_str(), "");
     _cfg->PutString(keyTok(ModuleType::PRESENCE,i).c_str(), "");
   }
+  // Specials
   _cfg->PutString(keyMac(ModuleType::PRESENCE,PRES_IDX_ENTRANCE).c_str(), "");
   _cfg->PutString(keyTok(ModuleType::PRESENCE,PRES_IDX_ENTRANCE).c_str(), "");
   _cfg->PutString(keyMac(ModuleType::PRESENCE,PRES_IDX_PARKING ).c_str(), "");
   _cfg->PutString(keyTok(ModuleType::PRESENCE,PRES_IDX_PARKING ).c_str(), "");
-  LOGI(1141,"NVS cleared (peers/tokens/mode/channel)");
+  LOGI(1141,"NVS cleared (peers/tokens/mode/channel/topology)");
 }
 
 String ESPNowManager::serializePeers() const {
@@ -366,10 +417,10 @@ String ESPNowManager::serializePeers() const {
 }
 
 String ESPNowManager::serializeTopology() const {
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(3072);
   JsonArray links = doc.createNestedArray("links");
 
-  // relay next hops
+  // relay next hops (+ prev sensor if known)
   for (size_t i=0;i<ICM_MAX_RELAYS;i++){
     if (!_relays[i].used || !_relayTopo[i].used) continue;
     JsonObject l = links.createNestedObject();
@@ -377,6 +428,10 @@ String ESPNowManager::serializeTopology() const {
     l["idx"]      = (uint8_t)i;
     l["next_mac"] = macBytesToStr(_relayTopo[i].nextMac);
     l["next_ip"]  = _relayTopo[i].nextIPv4;
+    if (_relayTopo[i].hasPrev) {
+      l["prev_sens_idx"] = _relayTopo[i].prevSensIdx;
+      l["prev_sens_mac"] = macBytesToStr(_relayTopo[i].prevSensMac);
+    }
   }
 
   // sensor dependencies
@@ -391,7 +446,6 @@ String ESPNowManager::serializeTopology() const {
     l["target_ip"]   = _sensorTopo[i].targetIPv4;
   }
 
-  // entrance / parking deps if any
   if (_entrance.used && _entrTopo.used) {
     JsonObject l = links.createNestedObject();
     l["type"]        = "entrance";
@@ -414,7 +468,7 @@ String ESPNowManager::serializeTopology() const {
 }
 
 String ESPNowManager::exportConfiguration() const {
-  DynamicJsonDocument doc(4096);
+  DynamicJsonDocument doc(6144);
   doc["channel"] = _channel;
   doc["mode"]    = _mode;
 
@@ -424,11 +478,20 @@ String ESPNowManager::exportConfiguration() const {
   doc["peers"] = jPeers.as<JsonVariant>();
 
   // topology
-  DynamicJsonDocument jTopo(2048);
+  DynamicJsonDocument jTopo(4096);
   deserializeJson(jTopo, serializeTopology());
   doc["topology"] = jTopo.as<JsonVariant>();
 
-  String out; serializeJson(doc, out);
+  // Prefer PSRAM for big JSON buffers
+  size_t len = measureJson(doc) + 1;
+  char* buf = (char*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+  if (!buf) {
+    String out; serializeJson(doc, out);
+    return out;
+  }
+  serializeJson(doc, buf, len);
+  String out(buf);
+  heap_caps_free(buf);
   return out;
 }
 
@@ -442,14 +505,12 @@ bool ESPNowManager::setChannel(uint8_t ch, bool persist){
   if (ch < 1 || ch > 13) return false;
   if (ch == _channel) { if (persist) _cfg->PutInt(keyCh().c_str(), ch); return true; }
 
-  // change WiFi channel
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous(false);
   _channel = ch;
   if (persist) _cfg->PutInt(keyCh().c_str(), ch);
 
-  // re-add peers on new channel
   reAddAllPeersOnChannel();
   LOGI(1150,"Channel set to %u and peers re-added", ch);
   return true;
@@ -483,9 +544,10 @@ int ESPNowManager::allocPending() {
   return -1;
 }
 void ESPNowManager::freePending(int idx) {
-  if (idx<0 || idx>=MAX_PENDING) return;
-  _pending[idx] = PendingTx{}; // zero
+  if (idx < 0 || idx >= MAX_PENDING) return;
+  _pending[idx] = PendingTx{};  // zero out the slot
 }
+
 
 int ESPNowManager::findPendingForPeer(const uint8_t mac[6]) {
   for (int i=0;i<MAX_PENDING;i++)
@@ -750,7 +812,9 @@ bool ESPNowManager::topoSetRelayNext(uint8_t relayIdx, const uint8_t nextMac[6],
   _relayTopo[relayIdx].used = true;
   memcpy(_relayTopo[relayIdx].nextMac, nextMac, 6);
   _relayTopo[relayIdx].nextIPv4 = nextIPv4;
-  return enqueueToPeer(pr, CmdDomain::TOPO, TOPO_SET_NEXT, (uint8_t*)&t, sizeof(t), true);
+  // classic short message (backward compat)
+  bool ok = enqueueToPeer(pr, CmdDomain::TOPO, TOPO_SET_NEXT, (uint8_t*)&t, sizeof(t), true);
+  return ok;
 }
 bool ESPNowManager::topoSetSensorDependency(uint8_t sensIdx, uint8_t targetRelayIdx, const uint8_t targetMac[6], uint32_t targetIPv4) {
   PeerRec* pr = nullptr; if(!ensurePeer(ModuleType::PRESENCE, sensIdx, pr)) return false;
@@ -763,7 +827,18 @@ bool ESPNowManager::topoSetSensorDependency(uint8_t sensIdx, uint8_t targetRelay
   else if (sensIdx<ICM_MAX_SENSORS) dep=&_sensorTopo[sensIdx];
   if (dep){ dep->used=true; dep->targetType=1; dep->targetIdx=targetRelayIdx; memcpy(dep->targetMac,targetMac,6); dep->targetIPv4=targetIPv4; }
 
+  // also update reverse link (previous sensor for that relay)
+  topoSetRelayPrevFromSensor(targetRelayIdx, sensIdx, pr->mac);
+
   return enqueueToPeer(pr, CmdDomain::TOPO, TOPO_SET_DEP, (uint8_t*)&d, sizeof(d), true);
+}
+bool ESPNowManager::topoSetRelayPrevFromSensor(uint8_t relayIdx, uint8_t sensIdx, const uint8_t sensMac[6]) {
+  if (relayIdx >= ICM_MAX_RELAYS) return false;
+  _relayTopo[relayIdx].used = true;
+  _relayTopo[relayIdx].hasPrev = true;
+  _relayTopo[relayIdx].prevSensIdx = sensIdx;
+  memcpy(_relayTopo[relayIdx].prevSensMac, sensMac, 6);
+  return true;
 }
 bool ESPNowManager::topoClearPeer(ModuleType t, uint8_t idx) {
   PeerRec* pr = nullptr; if(!ensurePeer(t, idx, pr)) return false;
@@ -805,7 +880,118 @@ bool ESPNowManager::configureTopology(const JsonVariantConst& links) {
       ok &= topoSetSensorDependency(sidx, rIdx, m, tip);
     }
   }
-  LOGI(1580,"Topology configured via JSON links");
+  rebuildReverseLinks();
+  saveTopologyToNvs();
+  ok &= topoPushAll(); // NEW: live push of tokens/IPs to every peer
+  LOGI(1580,"Topology configured + pushed");
+  return ok;
+}
+
+void ESPNowManager::rebuildReverseLinks(){
+  // Clear all prev info, then rebuild from deps
+  for (size_t i=0;i<ICM_MAX_RELAYS;i++){ _relayTopo[i].hasPrev=false; _relayTopo[i].prevSensIdx=0xFF; memset(_relayTopo[i].prevSensMac,0,6); }
+  auto setPrev=[&](uint8_t sensIdx, const SensorDep& dep){
+    if (dep.used && dep.targetIdx<ICM_MAX_RELAYS) {
+      // find sensor MAC
+      const PeerRec* spr = (sensIdx==PRES_IDX_ENTRANCE)?&_entrance : (sensIdx==PRES_IDX_PARKING)?&_parking : &_sensors[sensIdx];
+      if (spr->used) topoSetRelayPrevFromSensor(dep.targetIdx, sensIdx, spr->mac);
+    }
+  };
+  for (uint8_t i=0;i<ICM_MAX_SENSORS;i++) setPrev(i,_sensorTopo[i]);
+  if (_entrTopo.used) setPrev(PRES_IDX_ENTRANCE,_entrTopo);
+  if (_parkTopo.used) setPrev(PRES_IDX_PARKING ,_parkTopo);
+}
+
+bool ESPNowManager::saveTopologyToNvs() const {
+  String j = serializeTopology();
+
+  // PutString is void → just call it
+  _cfg->PutString(keyTopo().c_str(), j);  // NOTE: PutString expects a String&, not c_str()
+
+  // Best-effort verify by reading back
+  String back = _cfg->GetString(keyTopo().c_str(), "");
+  return (back == j);
+}
+
+bool ESPNowManager::loadTopologyFromNvs() {
+  String j = _cfg->GetString(keyTopo().c_str(), "");
+  if (j.isEmpty()) return true;
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, j);
+  if (err) { LOGW(1142,"Failed to parse NVS topology"); return false; }
+  JsonArrayConst links = doc["links"].as<JsonArrayConst>();
+  return configureTopology(links);
+}
+
+// ============ Topology PUSH (tokens+IPs) ============
+bool ESPNowManager::topoPushRelay(uint8_t relayIdx){
+  if (relayIdx>=ICM_MAX_RELAYS || !_relays[relayIdx].used) return false;
+  PeerRec* rpr = &_relays[relayIdx];
+
+  TopoRelayBundle b{};
+  b.myIdx = relayIdx;
+
+  // prev sensor info (optional)
+  b.hasPrev = _relayTopo[relayIdx].hasPrev ? 1 : 0;
+  b.prevSensIdx = _relayTopo[relayIdx].prevSensIdx;
+  memcpy(b.prevSensMac, _relayTopo[relayIdx].prevSensMac, 6);
+
+  // find prev sensor token (for optional acks)
+  if (b.hasPrev) {
+    const PeerRec* spr = (b.prevSensIdx==PRES_IDX_ENTRANCE)?&_entrance :
+                         (b.prevSensIdx==PRES_IDX_PARKING )?&_parking  :
+                         &_sensors[b.prevSensIdx];
+    if (spr && spr->used) memcpy(b.prevSensTok16, spr->token16, 16);
+  }
+
+  // next relay hop (if any)
+  b.hasNext = _relayTopo[relayIdx].used && _relayTopo[relayIdx].nextIPv4!=0 ? 1 : 0;
+  // determine next relay index by MAC match
+  uint8_t nextIdx = 0xFF;
+  if (b.hasNext) {
+    memcpy(b.nextMac, _relayTopo[relayIdx].nextMac, 6);
+    b.nextIPv4 = _relayTopo[relayIdx].nextIPv4;
+    for (uint8_t i=0;i<ICM_MAX_RELAYS;i++){
+      if (_relays[i].used && memcmp(_relays[i].mac, b.nextMac, 6)==0) { nextIdx=i; break; }
+    }
+    b.nextIdx = nextIdx;
+    if (nextIdx!=0xFF) memcpy(b.nextTok16, _relays[nextIdx].token16, 16); // token expected by NEXT relay
+  }
+
+  return enqueueToPeer(rpr, CmdDomain::TOPO, TOPO_PUSH, (uint8_t*)&b, sizeof(b), true);
+}
+
+bool ESPNowManager::topoPushSensor(uint8_t sensIdx){
+  PeerRec* spr = nullptr;
+  if (sensIdx==PRES_IDX_ENTRANCE) spr = &_entrance;
+  else if (sensIdx==PRES_IDX_PARKING) spr = &_parking;
+  else {
+    if (sensIdx>=ICM_MAX_SENSORS || !_sensors[sensIdx].used) return false;
+    spr = &_sensors[sensIdx];
+  }
+  const SensorDep* dep = (sensIdx==PRES_IDX_ENTRANCE)?&_entrTopo : (sensIdx==PRES_IDX_PARKING)?&_parkTopo : &_sensorTopo[sensIdx];
+  if (!dep->used) return false;
+
+  // find relay token to give to sensor (sensor must use relay's token in header)
+  uint8_t ridx = dep->targetIdx;
+  if (ridx>=ICM_MAX_RELAYS || !_relays[ridx].used) return false;
+
+  TopoSensorBundle b{};
+  b.sensIdx = sensIdx;
+  b.targetIdx = ridx;
+  memcpy(b.targetMac, dep->targetMac, 6);
+  memcpy(b.targetTok16, _relays[ridx].token16, 16);
+  b.targetIPv4 = dep->targetIPv4;
+
+  return enqueueToPeer(spr, CmdDomain::TOPO, TOPO_PUSH, (uint8_t*)&b, sizeof(b), true);
+}
+
+bool ESPNowManager::topoPushAll(){
+  bool ok = true;
+  for (uint8_t i=0;i<ICM_MAX_RELAYS;i++)  if (_relays[i].used) ok &= topoPushRelay(i);
+  for (uint8_t i=0;i<ICM_MAX_SENSORS;i++) if (_sensors[i].used && _sensorTopo[i].used) ok &= topoPushSensor(i);
+  if (_entrance.used && _entrTopo.used) ok &= topoPushSensor(PRES_IDX_ENTRANCE);
+  if (_parking .used && _parkTopo.used) ok &= topoPushSensor(PRES_IDX_PARKING);
   return ok;
 }
 
@@ -832,8 +1018,7 @@ bool ESPNowManager::sequenceStop() {
   return ok;
 }
 bool ESPNowManager::startSequence(const String& anchor, bool up) {
-  // Anchor is advisory; broadcast to everyone so chain can start at correct end.
-  (void)anchor;
+  (void)anchor; // advisory
   return sequenceStart(up ? SeqDir::UP : SeqDir::DOWN);
 }
 

@@ -1,9 +1,12 @@
+// =============================
+// File: WiFiManager.h
+// =============================
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
- *  File        : WiFiManager.h
- *  Purpose     : Web UI + REST API for pairing, topology, control
+ *  File        : WiFiManager.h (rewritten)
+ *  Purpose     : Wi‑Fi STA/AP bring‑up, web UI, REST API, and
+ *                ESPNOW channel alignment in either mode.
  **************************************************************/
-
 #ifndef WIFI_MANAGER_H
 #define WIFI_MANAGER_H
 
@@ -13,36 +16,42 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 
-#include "Config.h"
-#include "ConfigManager.h"
-#include "ESPNowManager.h"
+#include "Config.h"          // IP defaults, NVS keys, ESPNOW_CH_KEY, etc.
+#include "ConfigManager.h"   // GetString/PutString/GetInt/PutInt/GetBool/PutBool
+#include "ESPNowManager.h"   // setChannel(), serializePeers(), pair(), configureTopology(), exportConfiguration()
 #include "ICMLogFS.h"
-#include "WiFiAPI.h"
 
 class WiFiManager {
 public:
-    // NOTE: WFi argument lets you inject a mock or the global WiFi singleton.
+    enum NetMode : uint8_t { NET_AP=0, NET_STA=1 };
+
+    // NOTE: WiFi argument lets you inject a mock or the global WiFi singleton.
     WiFiManager(ConfigManager* cfg,
                 WiFiClass*     wfi,
                 ESPNowManager* espnw,
-                ICMLogFS*      log);
+                ICMLogFS*      log)
+    : _cfg(cfg), _wifi(wfi), _esn(espnw), _log(log) {}
 
     // lifecycle
     void begin();
-    void disableWiFiAP(); // full stop
+    void disableWiFiAP(); // full stop (AP only)
 
     // AP credentials quick setter
     void setAPCredentials(const char* ssid, const char* password);
 
-    // SPIFFS->Prefs config sync (imported schema)
+    // SPIFFS->Prefs config sync (legacy JSON -> calls configureTopology)
     void syncSpifToPrefs();
 
-    // singleton accessor for upload callback
+    // singleton pointer (used by upload callback)
     static WiFiManager* instance;
 
 private:
     // net bring-up
+    bool tryConnectSTAFromNVS(uint32_t timeoutMs = 12000);
     void startAccessPoint();
+    void alignESPNOWToCurrentChannel();
+
+    // routing
     void registerRoutes();
     void addCORS();
 
@@ -59,21 +68,27 @@ private:
     void hCfgImport(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hCfgFactoryReset(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
 
+    // Wi‑Fi
+    void hWiFiMode(AsyncWebServerRequest* req);
+    void hWiFiStaConnect(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    void hWiFiStaDisconnect(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    void hWiFiApStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    void hWiFiScan(AsyncWebServerRequest* req);
+
+    // Peers
     void hPeersList(AsyncWebServerRequest* req);
     void hPeerPair (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hPeerRemove(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
 
-    void hModeSet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
-    void hRelaySet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
-    void hSensorMode(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
-    void hSensorTrigger(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    // Topology
+    void hTopoSet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    void hTopoGet(AsyncWebServerRequest* req);
 
-    void hTopologyGet(AsyncWebServerRequest* req);
-    void hTopologySet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
-
+    // Sequences (optional)
     void hSeqStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hSeqStop (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
 
+    // Power (passthrough)
     void hPowerInfo(AsyncWebServerRequest* req);
     void hPowerCmd (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
 
@@ -82,19 +97,23 @@ private:
     void sendError(AsyncWebServerRequest* req, const char* msg, int code=400);
     void sendOK(AsyncWebServerRequest* req);
 
-    // file upload (chunked)
-    friend void handleFileUpload(AsyncWebServerRequest *request,
-                                 const String& filename, size_t index,
-                                 uint8_t *data, size_t len, bool final);
+    // UI helpers
+    void attachTopologyLinks(DynamicJsonDocument& dst);
+    bool applyExportedConfig(const JsonVariantConst& cfgObj);
 
 private:
-    ConfigManager*  _cfg;
-    WiFiClass*      _wifi;
-    ESPNowManager*  _esn;
-    ICMLogFS*       _log;
+    ConfigManager*  _cfg   = nullptr;
+    WiFiClass*      _wifi  = nullptr;
+    ESPNowManager*  _esn   = nullptr;
+    ICMLogFS*       _log   = nullptr;
 
     AsyncWebServer  _server{80};
-    bool            _apOn = false;
+    bool            _apOn  = false;
 };
+
+// file upload (chunked)
+void handleFileUpload(AsyncWebServerRequest *request,
+                      const String& filename, size_t index,
+                      uint8_t *data, size_t len, bool final);
 
 #endif // WIFI_MANAGER_H

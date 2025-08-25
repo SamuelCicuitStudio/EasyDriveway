@@ -1,6 +1,6 @@
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
- *  File        : ESPNowManager.h
+ *  File        : ESPNowManager.h   (token- & topology-aware rewrite)
  **************************************************************/
 #pragma once
 #include <Arduino.h>
@@ -9,6 +9,7 @@
 #include <esp_wifi.h>
 #include <mbedtls/sha256.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 
 #include "ConfigManager.h"
 #include "ICMLogFS.h"
@@ -21,28 +22,32 @@ public:
   enum class ModuleType : uint8_t { POWER=0, RELAY=1, PRESENCE=2 };
 
   struct PeerRec {
-    bool     used = false;
+    bool       used = false;
     ModuleType type = ModuleType::RELAY;
-    uint8_t  index = 0;
-    uint8_t  mac[6] = {0};
-    uint8_t  token16[16] = {0};
-    bool     online = false;
-    uint8_t  consecFails = 0;
-    int      activeTx = -1;
-    uint32_t lastSeen = 0;
+    uint8_t    index = 0;
+    uint8_t    mac[6] = {0};
+    uint8_t    token16[16] = {0};   // token this peer expects for frames addressed to it
+    bool       online = false;
+    uint8_t    consecFails = 0;
+    int        activeTx = -1;
+    uint32_t   lastSeen = 0;
   };
 
   // In-RAM topology mirrors (what we push to slaves)
   struct RelayLink {
-    bool used = false;
-    uint8_t nextMac[6] = {0};
-    uint32_t nextIPv4 = 0;
+    bool     used      = false;
+    uint8_t  nextMac[6]= {0};
+    uint32_t nextIPv4  = 0;
+    // NEW: track preceding sensor for context/acks
+    bool     hasPrev   = false;
+    uint8_t  prevSensIdx = 0xFF;
+    uint8_t  prevSensMac[6] = {0};
   };
   struct SensorDep {
-    bool used = false;
-    uint8_t targetType = 1;  // relay
-    uint8_t targetIdx = 0;
-    uint8_t targetMac[6] = {0};
+    bool     used = false;
+    uint8_t  targetType = 1;  // relay
+    uint8_t  targetIdx = 0;
+    uint8_t  targetMac[6] = {0};
     uint32_t targetIPv4 = 0;
   };
 
@@ -76,17 +81,21 @@ public:
   bool pairPresenceParking (const String& macStr);
   bool unpairByMac(const String& macStr);
 
-  // --------- Helpers asked by WiFiManager (new) ----------
+  // Auto-index helpers (first free slot, with NVS cursor)
+  bool pairRelayAuto(const String& macStr, uint8_t* outIdx=nullptr);
+  bool pairPresenceAuto(const String& macStr, uint8_t* outIdx=nullptr);
+
+  // --------- Helpers asked by WiFiManager ----------
   // (1) CRUD / housekeeping
-  bool pair(const String& mac, const String& type);        // "power", "relay3", "sensor2", "entrance", "parking"
+  bool pair(const String& mac, const String& type);        // "power", "relay" or "relayN", "sensor" or "sensorN", "entrance", "parking"
   bool removePeer(const String& mac) { return unpairByMac(mac); }
   void removeAllPeers();                                   // clear peers in esp-now (RAM only)
-  void clearAll();                                         // also clear NVS MAC+token+mode+channel
+  void clearAll();                                         // also clear NVS MAC+token+mode+channel+topology
 
   // (2) Query/serialize
   String serializePeers() const;                           // JSON of peers + mode/channel + online
-  String serializeTopology() const;                        // JSON of current in-RAM topology links
-  String exportConfiguration() const;                      // peers + tokens + topology + ch/mode
+  String serializeTopology() const;                        // JSON of current in-RAM topology links (with prev/next)
+  String exportConfiguration() const;                      // peers + topology + ch/mode (PSRAM buffer if large)
   String getEntranceSensorMac() const;                     // "" if not set
 
   // (3) Channel / mode
@@ -112,8 +121,14 @@ public:
   // (5) Topology
   bool topoSetRelayNext(uint8_t relayIdx, const uint8_t nextMac[6], uint32_t nextIPv4);
   bool topoSetSensorDependency(uint8_t sensIdx, uint8_t targetRelayIdx, const uint8_t targetMac[6], uint32_t targetIPv4);
+  bool topoSetRelayPrevFromSensor(uint8_t relayIdx, uint8_t sensIdx, const uint8_t sensMac[6]); // NEW: track reverse
   bool topoClearPeer(ModuleType t, uint8_t idx);
-  bool configureTopology(const JsonVariantConst& links);   // expect array of {type:"relay"/"sensor", ...}
+  bool configureTopology(const JsonVariantConst& links);   // array of objects; live push enabled
+
+  // PUSH token/IP bundles derived from the in-RAM topology:
+  bool topoPushRelay(uint8_t relayIdx);
+  bool topoPushSensor(uint8_t sensIdx);
+  bool topoPushAll();
 
   // (6) Sequence
   bool sequenceStart(SeqDir dir);
@@ -131,11 +146,14 @@ public:
 
 private:
   // ---------- NVS keys (<= 6 chars each) ----------
-  String keyMd() const { return String("ESMODE"); }   // system mode
-  String keyCh() const { return String("ESCHNL"); }   // channel
-
-  String keyTok(ModuleType t, uint8_t index);         // <=6 (already enforced)
-  String keyMac(ModuleType t, uint8_t index);         // <=6 (already enforced)
+  String keyMd() const   { return String("ESMODE"); }  // system mode
+  String keyCh() const   { return String("ESCHNL"); }  // channel
+  String keyTok(ModuleType t, uint8_t index);          // <=6
+  String keyMac(ModuleType t, uint8_t index);          // <=6
+  String keyTopo() const { return String("TOPOLJ"); }  // topology JSON blob
+  String keyRNext()const { return String("RLNEXT"); }  // next relay index hint
+  String keySNext()const { return String("SNNEXT"); }  // next sensor index hint
+  String keyCtr() const  { return String("CNTTOK"); }  // token counter
 
   // ---------- Peers ----------
   bool addOrUpdatePeer(ModuleType t, uint8_t index, const uint8_t mac[6]);
@@ -147,18 +165,19 @@ private:
   void tokenCompute(const String& icmMac, const String& nodeMac, uint32_t counter, String& tokenHex32);
   void tokenHexTo16(const String& hex, uint8_t out[16]);
   bool loadOrCreateToken(ModuleType t, uint8_t index, const String& macStr, String& tokenHexOut, uint8_t token16Out[16]);
+  uint32_t takeAndBumpTokenCounter();
 
   // ---------- Frame / Send ----------
   struct PendingTx {
-    bool used = false;
-    uint8_t mac[6] = {0};
-    uint8_t frame[250];
+    bool     used = false;
+    uint8_t  mac[6] = {0};
+    uint8_t  frame[250];
     uint16_t len = 0;
     uint8_t  dom = 0;
     uint8_t  op = 0;
     uint16_t ctr = 0;
-    bool requireAck = true;
-    uint8_t retriesLeft = 0;
+    bool     requireAck = true;
+    uint8_t  retriesLeft = 0;
     uint32_t deadlineMs = 0;
     uint32_t backoffMs = 0;
   };
@@ -185,6 +204,11 @@ private:
   // ---------- Small helpers ----------
   uint16_t nextCtr() { return ++_ctr; }
   void reAddAllPeersOnChannel();
+  uint8_t nextFreeRelayIndex() const;
+  uint8_t nextFreeSensorIndex() const;
+  void    rebuildReverseLinks();  // set relay.prev from sensor deps
+  bool    saveTopologyToNvs() const;
+  bool    loadTopologyFromNvs();
 
 private:
   // Singleton for static callbacks
