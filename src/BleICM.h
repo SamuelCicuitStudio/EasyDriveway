@@ -82,7 +82,7 @@ public:
   ESPNowManager* Esn;
   WiFiManager*   WMgr;
   ICMLogFS*      Log;
-  int _pinB = LED_B_PIN_DEFAULT;
+  uint8_t _pinB = LED_B_PIN_DEFAULT;
 
   // optional LED task (blink while advertising)
   static void advLedTask(void* pv);

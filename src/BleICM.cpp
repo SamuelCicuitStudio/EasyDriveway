@@ -231,16 +231,27 @@ void BleICM::onBLEDisconnected() {
 }
 
 void BleICM::advLedTask(void* pv) {
+  // Use public member pin (e.g., `ledPin`), fallback to compile-time default
+  const int pin = (BleICM::instance && BleICM::instance->_pinB > -1)
+                    ? BleICM::instance->_pinB
+                    : (int)LED_B_PIN_DEFAULT;
+
+  pinMode(pin, OUTPUT);
+
   for (;;) {
-    if (ICM_pServer && ICM_pServer->getConnectedCount() > 0) break;
-    if (ICM_isPaired) break;
-    digitalWrite(_pinB, HIGH); vTaskDelay(pdMS_TO_TICKS(500));
-    digitalWrite(_pinB, LOW);  vTaskDelay(pdMS_TO_TICKS(500));
+    if ((ICM_pServer && ICM_pServer->getConnectedCount() > 0) || ICM_isPaired) break;
+
+    digitalWrite(pin, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    digitalWrite(pin, LOW);
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
-  digitalWrite(_pinB, LOW);
+
+  digitalWrite(pin, LOW);
   BleICM::advLedTaskHandle = nullptr;
   vTaskDelete(nullptr);
 }
+
 
 void BleICM::startAdvLedTask() {
   if (!advLedTaskHandle) {
