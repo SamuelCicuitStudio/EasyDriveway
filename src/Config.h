@@ -104,14 +104,32 @@
 
 // ============================================================================
 // [6] BLE GATT / Advertising (compile-time constants)
+//   NOTE: UUIDs are compile-time constants (not NVS keys).
+//         Update them to your production UUIDs as needed.
 // ============================================================================
-#define BATTERY_SERVICE                 BLEUUID((uint16_t)0x180F)
-#define BATTERY_LEVEL_CHARACTERISTIC_UUID BLEUUID((uint16_t)0x2A19)
-#define BATTERY_LEVEL_DESCRIPTOR_UUID     BLEUUID((uint16_t)0x2A19)
-#define SERVICE_UUID                  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define OLD_APP_CHAR_UUID             "4a37b01d-364e-44d9-9335-770e2025b29f"
-#define ADVERTISING_TIMEOUT_MS        60000
-#define ADVERTISING_TIMEOUT           60000
+// Standard Battery service (kept from your original)
+#define BATTERY_SERVICE                    BLEUUID((uint16_t)0x180F)
+#define BATTERY_LEVEL_CHARACTERISTIC_UUID  BLEUUID((uint16_t)0x2A19)
+#define BATTERY_LEVEL_DESCRIPTOR_UUID      BLEUUID((uint16_t)0x2A19)
+
+// Legacy app UUIDs (kept for compatibility)
+#define SERVICE_UUID                 "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define OLD_APP_CHAR_UUID            "4a37b01d-364e-44d9-9335-770e2025b29f"
+
+// Advertising config
+#define ADVERTISING_TIMEOUT_MS       60000
+#define ADVERTISING_TIMEOUT          60000
+
+// -------- ICM BLE Service & Characteristics (add/replace as needed) --------
+#define ICM_BLE_SERVICE_UUID   "7e3b0001-3c6b-4c2a-9a4b-icm0serv0001"
+#define ICM_CH_STATUS_UUID     "7e3b0002-3c6b-4c2a-9a4b-icm0stat0002"
+#define ICM_CH_WIFI_UUID       "7e3b0003-3c6b-4c2a-9a4b-icm0wifi0003"
+#define ICM_CH_PEERS_UUID      "7e3b0004-3c6b-4c2a-9a4b-icm0peer0004"
+#define ICM_CH_TOPO_UUID       "7e3b0005-3c6b-4c2a-9a4b-icm0topo0005"
+#define ICM_CH_SEQ_UUID        "7e3b0006-3c6b-4c2a-9a4b-icm0seq_0006"
+#define ICM_CH_POWER_UUID      "7e3b0007-3c6b-4c2a-9a4b-icm0powr0007"
+#define ICM_CH_EXPORT_UUID     "7e3b0008-3c6b-4c2a-9a4b-icm0expt0008"
+#define ICM_CH_OLDAPP_UUID     "7e3b0009-3c6b-4c2a-9a4b-icm0olda0009"
 
 // ============================================================================
 // [7] Hardware Pin Mapping (NVS keys ≤ 6 chars)
@@ -146,11 +164,11 @@
 // 7.5 Sensors & Buzzer
 #define TEMP_SENSOR_MODEL_KEY        "TSMODL"  // 6
 #define TEMP_SENSOR_TYPE_KEY         "TSTYPE"  // 6
-#define TEMP_SENSOR_PIN_KEY          "TSGPIO"  // 6 (was PTSENS)
+#define TEMP_SENSOR_PIN_KEY          "TSGPIO"  // 6
 #define TEMP_SENSOR_PULLUP_KEY       "TSPULL"  // 6
 
 #define BUZZER_MODEL_KEY             "BZMODL"  // 6
-#define BUZZER_PIN_KEY               "BZGPIO"  // 6 (was PBZZR)
+#define BUZZER_PIN_KEY               "BZGPIO"  // 6
 #define BUZZER_ACTIVE_HIGH_KEY       "BZAH"    // 4
 
 // ============================================================================
