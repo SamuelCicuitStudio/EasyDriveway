@@ -170,6 +170,8 @@
 #define BUZZER_MODEL_KEY             "BZMODL"  // 6
 #define BUZZER_PIN_KEY               "BZGPIO"  // 6
 #define BUZZER_ACTIVE_HIGH_KEY       "BZAH"    // 4
+#define BUZZER_FEEDBACK_KEY      "BZFEED"   // 6 chars
+#define BUZZER_FEEDBACK_DEFAULT  1          // enabled by default
 
 // ============================================================================
 // [8] Hardware Pin Defaults (compile-time)

@@ -269,8 +269,8 @@ void ConfigManager::initializeVariables() {
     }
 
     // Base names
-    String apBase    = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT;      // "ICM_"
-    String deviceName = apBase + fused;                       // e.g. "ICM_1AX2BW..."
+    String apBase     = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT;          // "ICM_"
+    String deviceName = apBase + fused;                             // e.g. "ICM_1AX2BW..."
     String hostName   = String(WIFI_STA_HOST_DEFAULT) + "-" + macTail; // "ICM-1A2B3C"
 
     // ---------------- Wireless / BLE ----------------------------
@@ -283,7 +283,7 @@ void ConfigManager::initializeVariables() {
     PutInt   (DEVICE_BLE_AUTH_PASS_KEY,     DEVICE_BLE_AUTH_PASS_DEFAULT);
     PutBool  (BLE_CONNECTION_STATE_KEY,     BLE_CONNECTION_STATE_DEFAULT);
 
-    // --- NEW: Wi-Fi Station (STA) defaults (used by WiFiManager::tryConnectSTAFromNVS) ---
+    // Wi-Fi Station (STA) defaults
     PutString(WIFI_STA_SSID_KEY,            WIFI_STA_SSID_DEFAULT);   // ""
     PutString(WIFI_STA_PASS_KEY,            WIFI_STA_PASS_DEFAULT);   // ""
     PutString(WIFI_STA_HOST_KEY,            hostName);                // "ICM-1A2B3C"
@@ -334,10 +334,11 @@ void ConfigManager::initializeVariables() {
     PutInt   (TEMP_SENSOR_PIN_KEY,     TEMP_SENSOR_PIN_DEFAULT);     // 18
     PutBool  (TEMP_SENSOR_PULLUP_KEY,  TEMP_SENSOR_PULLUP_DEFAULT);  // 1
 
-    // Buzzer
-    PutString(BUZZER_MODEL_KEY,        BUZZER_MODEL_DEFAULT);        // "YS-MBZ12085C05R42"
+    // Buzzer (model + wiring + user feedback enable)
+    PutString(BUZZER_MODEL_KEY,        BUZZER_MODEL_DEFAULT);        // e.g. "YS-MBZ12085C05R42"
     PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
     PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
+    PutBool  (BUZZER_FEEDBACK_KEY,     BUZZER_FEEDBACK_DEFAULT);     // 1 (enabled)
 }
 
 /**
