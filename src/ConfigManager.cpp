@@ -249,35 +249,49 @@ void ConfigManager::initializeDefaults() {
 void ConfigManager::initializeVariables() {
     // ---------------- Identity / counters / flags ----------------
     uint32_t randomCounter = ((uint32_t)esp_random() << 1) ^ random(10000, 99999);
-    PutInt(COUNTER_KEY, randomCounter % 100000);            // 5-digit counter
-    PutBool(RESET_FLAG_KEY, RESET_FLAG_DEFAULT);            // false
-    PutBool(GOTO_CONFIG_KEY, RESET_FLAG_DEFAULT);           // false
-    PutString(DEVICE_ID_KEY, DEVICE_ID_DEFAULT);            // "ICM01"
+    PutInt (COUNTER_KEY,        randomCounter % 100000);      // 5-digit counter
+    PutBool(RESET_FLAG_KEY,     RESET_FLAG_DEFAULT);          // false
+    PutBool(GOTO_CONFIG_KEY,    RESET_FLAG_DEFAULT);          // false
+    PutString(DEVICE_ID_KEY,    DEVICE_ID_DEFAULT);           // "ICM01"
 
     // ---------------- Friendly name generation ------------------
-    String mac = WiFi.macAddress();         // e.g. "24:6F:28:1A:2B:3C"
-    mac.replace(":", "");                   // "246F281A2B3C"
-    String macTail = mac.substring(6);      // "1A2B3C"
-    const char* letters[] = { "X", "W", "Z", "Q", "J" };
+    String mac = WiFi.macAddress();           // "24:6F:28:1A:2B:3C"
+    mac.replace(":", "");                     // "246F281A2B3C"
+    String macTail = mac.substring(6);        // "1A2B3C"
 
-    String fused = "";
-    for (int i = 0; i < macTail.length(); i += 2) {
+    // Build a distinctive suffix for user-visible names
+    const char* letters[] = { "X","W","Z","Q","J" };
+    String fused;
+    for (int i = 0; i < (int)macTail.length(); i += 2) {
         String pair = macTail.substring(i, i + 2);
         String randChar = letters[random(0, 5)];
         fused += pair + randChar;
     }
-    String deviceName = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT + fused; // "ICM_XXXX"
+
+    // Base names
+    String apBase    = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT;      // "ICM_"
+    String deviceName = apBase + fused;                       // e.g. "ICM_1AX2BW..."
+    String hostName   = String(WIFI_STA_HOST_DEFAULT) + "-" + macTail; // "ICM-1A2B3C"
 
     // ---------------- Wireless / BLE ----------------------------
+    // AP (hotspot) defaults
     PutString(DEVICE_WIFI_HOTSPOT_NAME_KEY, deviceName);
     PutString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT);
+
+    // BLE defaults
     PutString(DEVICE_BLE_NAME_KEY,          deviceName);
     PutInt   (DEVICE_BLE_AUTH_PASS_KEY,     DEVICE_BLE_AUTH_PASS_DEFAULT);
     PutBool  (BLE_CONNECTION_STATE_KEY,     BLE_CONNECTION_STATE_DEFAULT);
 
-    // ---------------- ESP-NOW / System Mode (persisted) ---------
-    PutInt(ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);          // Wi-Fi/ESP-NOW channel
-    PutInt(ESPNOW_MD_KEY, (int)ESPNOW_MD_DEFAULT);          // 0=AUTO, 1=MANUAL (see CommandAPI.h)
+    // --- NEW: Wi-Fi Station (STA) defaults (used by WiFiManager::tryConnectSTAFromNVS) ---
+    PutString(WIFI_STA_SSID_KEY,            WIFI_STA_SSID_DEFAULT);   // ""
+    PutString(WIFI_STA_PASS_KEY,            WIFI_STA_PASS_DEFAULT);   // ""
+    PutString(WIFI_STA_HOST_KEY,            hostName);                // "ICM-1A2B3C"
+    PutInt   (WIFI_STA_DHCP_KEY,            WIFI_STA_DHCP_DEFAULT);   // 1 (DHCP)
+
+    // ---------------- ESP-NOW / System Mode ----------------------
+    PutInt(ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);             // Wi-Fi/ESP-NOW channel
+    PutInt(ESPNOW_MD_KEY, (int)ESPNOW_MD_DEFAULT);             // 0=AUTO, 1=MAN
 
     // ---------------- User / Security ---------------------------
     PutString(PASS_PIN_KEY, PASS_PIN_DEFAULT);
@@ -313,19 +327,18 @@ void ConfigManager::initializeVariables() {
     PutInt   (I2C_SDA_PIN_KEY,   I2C_SDA_PIN_DEFAULT);      // 5
     PutInt   (RTC_RST_PIN_KEY,   RTC_RST_PIN_DEFAULT);      // 40
 
-    // ---------------- Sensors & Actuators (new) -----------------
+    // ---------------- Sensors & Actuators -----------------------
     // DS18B20 temperature sensor (1-Wire)
     PutString(TEMP_SENSOR_MODEL_KEY,   TEMP_SENSOR_MODEL_DEFAULT);   // "DS18B20"
     PutString(TEMP_SENSOR_TYPE_KEY,    TEMP_SENSOR_TYPE_DEFAULT);    // "ONEWIRE"
     PutInt   (TEMP_SENSOR_PIN_KEY,     TEMP_SENSOR_PIN_DEFAULT);     // 18
-    PutBool  (TEMP_SENSOR_PULLUP_KEY,  TEMP_SENSOR_PULLUP_DEFAULT);  // 1 (hint)
+    PutBool  (TEMP_SENSOR_PULLUP_KEY,  TEMP_SENSOR_PULLUP_DEFAULT);  // 1
 
-    // Buzzer (e.g., YS-MBZ12085C05R42)
+    // Buzzer
     PutString(BUZZER_MODEL_KEY,        BUZZER_MODEL_DEFAULT);        // "YS-MBZ12085C05R42"
     PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
     PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
 }
-
 
 /**
  * @brief Gets a boolean value from preferences.

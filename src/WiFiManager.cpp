@@ -90,37 +90,46 @@ void WiFiManager::syncSpifToPrefs() {
 }
 
 // -----------------------------------------------------------
-// net bring-up & ESPNOW alignment
+// net bring-up & ESPNOW alignment (uses ConfigManager keys)
 // -----------------------------------------------------------
 bool WiFiManager::tryConnectSTAFromNVS(uint32_t timeoutMs) {
+    // 1) Try ConfigManager-provided STA creds first
+    const String ssid = _cfg ? _cfg->GetString(WIFI_STA_SSID_KEY, "") : "";
+    const String psk  = _cfg ? _cfg->GetString(WIFI_STA_PASS_KEY,  "") : "";
+
     _wifi->mode(WIFI_STA);
-    _wifi->persistent(true);   // use WiFi NVS credentials if present
     _wifi->setAutoConnect(true);
     _wifi->setAutoReconnect(true);
-
-    _wifi->disconnect(false);
+    _wifi->disconnect(true);
     delay(50);
-    _wifi->begin();            // no args => use NVS-stored creds
 
-    uint32_t start = millis();
-    wl_status_t st;
-    do {
-        st = _wifi->status();
-        if (st == WL_CONNECTED) break;
+    if (ssid.length()) {
+        // Prefer your own NVS (ConfigManager) credentials
+        // Avoid writing them into WiFi's internal NVS (keep your source of truth in _cfg)
+        _wifi->persistent(false);
+        if (psk.length()) _wifi->begin(ssid.c_str(), psk.c_str());
+        else              _wifi->begin(ssid.c_str());
+    } else {
+        // Fallback: use WiFi's internal NVS (if you previously called WiFi.begin(ssid,pass))
+        _wifi->persistent(true);
+        _wifi->begin();  // no args => use WiFi NVS
+    }
+
+    // Wait for connect
+    const uint32_t start = millis();
+    while (_wifi->status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
         delay(100);
-    } while (millis() - start < timeoutMs);
-
-    if (st != WL_CONNECTED) {
-        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_WARN, 6010, "STA connect failed; will use AP", "WiFiMgr");
+    }
+    if (_wifi->status() != WL_CONNECTED) {
+        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_WARN, 6010,
+                              "STA connect failed; will use AP", "WiFiMgr");
         return false;
     }
 
     if (_log) {
-        _log->eventf(
-            ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6011,
-            "STA connected ip=%s rssi=%d ch=%d",
-            _wifi->localIP().toString().c_str(), _wifi->RSSI(), _wifi->channel()
-        );
+        _log->eventf(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6011,
+                     "STA connected ip=%s rssi=%d ch=%d",
+                     _wifi->localIP().toString().c_str(), _wifi->RSSI(), _wifi->channel());
     }
 
     alignESPNOWToCurrentChannel();
@@ -128,11 +137,13 @@ bool WiFiManager::tryConnectSTAFromNVS(uint32_t timeoutMs) {
 }
 
 void WiFiManager::startAccessPoint() {
+    // AP creds from ConfigManager (your NVS keys in Config.h)
     String apSsid = _cfg ? _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT)
                          : String(DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
     String apPass = _cfg ? _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT)
                          : String(DEVICE_AP_AUTH_PASS_DEFAULT);
-    int    ch     = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+
+    int ch = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
     if (ch < 1 || ch > 13) ch = ESPNOW_CH_DEFAULT;
 
     _wifi->mode(WIFI_AP);
@@ -146,27 +157,24 @@ void WiFiManager::startAccessPoint() {
     }
     _apOn = true;
 
-    // Align ESP-NOW to AP channel
+    // Align ESP-NOW to AP channel and persist it via your ConfigManager key
     if (_esn) _esn->setChannel((uint8_t)ch);
     if (_cfg) _cfg->PutInt(ESPNOW_CH_KEY, ch);
 
     if (_log) {
-        _log->eventf(
-            ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6022,
-            "AP up %s pass=%s ip=%s ch=%d",
-            apSsid.c_str(), apPass.c_str(), _wifi->softAPIP().toString().c_str(), ch
-        );
+        _log->eventf(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6022,
+                     "AP up %s pass=%s ip=%s ch=%d",
+                     apSsid.c_str(), apPass.c_str(), _wifi->softAPIP().toString().c_str(), ch);
     }
 }
 
 void WiFiManager::alignESPNOWToCurrentChannel() {
-    // If connected as STA, force ESP-NOW to the Wi-Fi channel.
+    // When in STA, bind ESP-NOW to the router’s channel; persist it in your own key
     uint8_t ch = _wifi->channel();
     if (ch < 1 || ch > 13) ch = ESPNOW_CH_DEFAULT;
     if (_esn) _esn->setChannel(ch);
     if (_cfg) _cfg->PutInt(ESPNOW_CH_KEY, (int)ch);
 }
-
 // -----------------------------------------------------------
 // routing
 // -----------------------------------------------------------
