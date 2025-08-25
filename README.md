@@ -1,7 +1,8 @@
-
 # ICM Controller Firmware
 
-**Interface Control Module (ICM)** — a cohesive ESP32 firmware that orchestrates Wi-Fi (STA/AP), ESP-NOW mesh control, BLE command/telemetry, SD-card logging, RTC timekeeping/alarms, RGB status, cooling, and configurable NVS-backed settings.
+**Interface Control Module (ICM)** — the central ESP32 firmware that coordinates EasyDriveWay lighting and other peripherals. It manages Wi-Fi (STA/AP), ESP-NOW peers/topology, BLE control, SD logging, RTC timekeeping, cooling, sleep/wake, RGB status, and a configurable buzzer with NVS-backed settings.
+
+> This README describes the full ICM *module* firmware. It incorporates the EasyDriveWay functional model (zones, sequences, sensors, Wi-Fi/BLE app control, config persistence) and maps those requirements onto ICM components.&#x20;
 
 ---
 
@@ -10,199 +11,204 @@
 * [Overview](#overview)
 * [System architecture](#system-architecture)
 * [Features at a glance](#features-at-a-glance)
-* [Module guide](#module-guide)
-
-  * [ESPNowManager](#espnowmanager)
-  * [WiFiManager (STA/AP + Web)](#wifimanager-staap--web)
-  * [BLE control (BleICM)](#ble-control-bleicm)
-  * [Logging (ICMLogFS)](#logging-icmlogfs)
-  * [Configuration (ConfigManager)](#configuration-configmanager)
-  * [RGB status LED](#rgb-status-led)
-  * [RTC & time (RTCManager)](#rtc--time-rtcmanager)
-  * [Sleep & wake (SleepTimer)](#sleep--wake-sleeptimer)
-* [Configuration & NVS keys](#configuration--nvs-keys)
-* [Boot & runtime flow](#boot--runtime-flow)
-* [REST / Web UI pointers](#rest--web-ui-pointers)
+* [Repo layout](#repo-layout)
 * [Build & flash](#build--flash)
-* [Examples](#examples)
+* [Configuration (NVS keys)](#configuration-nvs-keys)
+* [Networking modes (STA/AP) + ESP-NOW](#networking-modes-staap--esp-now)
+* [BLE control (BleICM)](#ble-control-bleicm)
+* [ESP-NOW peers, topology & sequences](#esp-now-peers-topology--sequences)
+* [Logging & diagnostics](#logging--diagnostics)
+* [RTC & scheduling](#rtc--scheduling)
+* [Cooling, sleep & power/buzzer cues](#cooling-sleep--powerbuzzer-cues)
+* [Security model](#security-model)
+* [Spec trace to EasyDriveWay](#spec-trace-to-easydriveway)
 * [Troubleshooting](#troubleshooting)
 * [Roadmap](#roadmap)
+* [License](#license)
 
 ---
 
 ## Overview
 
-ICM supervises a **driveway / lighting chain** (entrance sensor → relays → parking sensor) plus other peripherals. Topology and peers are configurable via JSON, and sequences (UP/DOWN) can be started/stopped programmatically. The ESP-NOW manager exposes callbacks and JSON snapshots so your Web UI can visualize peers/topology and drive actions. &#x20;
+ICM is the “brain” of **EasyDriveWay**: it listens to sensors (PIR/day-night via modules), drives relays in **UP/DOWN sequences** across zones, exposes control/config over **Wi-Fi (REST/web UI)** and **BLE (GATT)**, and keeps robust state in **NVS**. It’s designed as a hub with swappable expansion modules and clean JSON interfaces to front-end apps.&#x20;
 
 ---
 
 ## System architecture
 
 ```
-+--------------------+       +--------------------+       +--------------------+
-|  WiFiManager (AP/  |<----->|  Web UI / REST     |<----->|  ConfigManager     |
-|  STA + CORS + FS)  |       |  (routes/JSON)     |       |  (NVS keys)        |
-+---------^----------+       +---------^----------+       +---------^----------+
-          |                              |                            |
-          v                              |                            |
-   +------+--------+                     |                            |
-   |  ESPNowManager|<--------------------+----------------------------+
-   |  (peers/topo, |                    JSON peers/topology/export    |
-   |  sequences)   |<------+
-   +-------^-------+       |   +-----------------+     +---------------------+
-           |               +---|  BleICM (GATT)  |<--->|  ICMLogFS (SD Logs) |
-           |                   |  Status/WiFi/   |     |  events, FS browse  |
-           |                   |  Peers/Topo...  |     +---------------------+
-           |                   +-----------------+            ^
-           |                                                 |
-           v                                                 |
-   +-----------------+       +-------------------+           |
-   | RTCManager      |       | SleepTimer        |-----------+
-   | (DS3231, sync)  |       | (inactivity/alarm)|
-   +-----------------+       +-------------------+
-                 \                /
-                  \              /
-                   +------------+
-                   | RGBLed     |
-                   +------------+
++------------------+      +-------------------+      +---------------------+
+|  WiFiManager     |<---->|  Web UI / REST    |<---->|  ConfigManager      |
+|  (STA/AP, CORS)  |      |  (browser/app)    |      |  (NVS, defaults)    |
++---------^--------+      +---------^---------+      +----------^----------+
+          |                          |                         |
+          v                          |                         |
+   +------+--------+                 |                         |
+   | ESPNowManager |<----------------+------ JSON topo/peers --+
+   | (peers, topo, |                        & sequences
+   |  sequences)   |<----------+
+   +-------^-------+           |     +------------------+      +-----------------+
+           |                   +---->|  BleICM (GATT)   |<---->|  ICMLogFS (SD)  |
+           |                         |  WiFi/Peers/Topo |      |  logs/events    |
+           v                         +------------------+      +-----------------+
+       [Sensors/Relays via I2C/expansion boards]         [RTC] [Cooling] [Sleep] [RGB] [Buzzer]
 ```
-
-*Key references:* Wi-Fi AP bring-up & CORS headers, Web UI integration, JSON peers/topology export, and logging/event APIs are all provided by the headers listed in this repo.   &#x20;
 
 ---
 
 ## Features at a glance
 
-* **Wi-Fi AP/STA** with simple web endpoints and permissive CORS for UI development.&#x20;
-* **ESP-NOW** peers/topology management + sequence control (UP/DOWN), JSON snapshots for UI. &#x20;
-* **BLE GATT (BleICM)** service exposing status, Wi-Fi control, peers, topology, power, export/import, and an “Old App” back-compat channel.&#x20;
-* **SD logging** with per-domain events, rotation/purge, and UART file streaming utilities. &#x20;
-* **RTC (DS3231)** timekeeping, 32 kHz output helper, and system/RTC sync helpers. &#x20;
-* **Inactivity sleep** scheduling and alarm-based wake control. &#x20;
-* **Config-driven RGB LED** patterns and GPIO pins loaded from NVS (with defaults). &#x20;
+* **Wi-Fi STA/AP** with simple REST endpoints and CORS for web UI.
+* **ESP-NOW** mesh: peer management, topology, and **zone sequences** (UP/DOWN).
+* **BLE (BleICM)** service for phone apps: status, Wi-Fi control, peers/topology, export/import.
+* **ConfigManager** with short NVS keys (≤6 chars) and sensible defaults.
+* **ICMLogFS** SD logging with domains/severities and log rotation.
+* **RTCManager** (DS3231) for accurate time & scheduling hooks.
+* **SleepTimer** inactivity + alarm wake.
+* **RGBLed** status effects; **BuzzerManager** event tones (startup, Wi-Fi up, pairing, power lost, low battery).
+* **Security**: BLE pairing with static passkey, Wi-Fi creds stored in NVS, AP passworded.
 
 ---
 
-## Module guide
+## Repo layout
 
-### ESPNowManager
+* `Config.h`, `ConfigManager.h/.cpp` — NVS keys (≤6 chars), defaults, helpers
+* `WiFiManager.h/.cpp`, `WiFiAPI.h` — STA/AP control, REST routes, CORS
+* `ESPNowManager.h/.cpp` — peers, topology, sequences, export/snapshots
+* `BleICM.h/.cpp` — BLE GATT (status, wifi, peers, topo, seq, power, export, compat)
+* `ICMLogFS.h/.cpp` — SD logging and utilities
+* `RTCManager.h/.cpp` — DS3231 timekeeping & sync
+* `SleepTimer.h/.cpp` — inactivity & alarm sleep
+* `CoolingManager.h/.cpp` — fan/temp policies
+* `RGBLed.h/.cpp` — status LED patterns
+* `BuzzerManager.h/.cpp` — event patterns + NVS enable/disable
 
-* **Topology:** define links via JSON and apply at once (`configureTopology(json["links"])`).&#x20;
-* **Sequences:** `sequenceStart(UP/DOWN)` and `sequenceStop()`; a helper `startSequence(anchor, up)`. &#x20;
-* **UI integration:** JSON snapshots for peers/topology/export to power a web UI.&#x20;
-
-### WiFiManager (STA/AP + Web)
-
-* **AP bring-up** with `softAPConfig()` + `softAP(ssid,pass)`; IP defaults are in `Config.h`. &#x20;
-* **CORS** defaults allow easy local development.&#x20;
-* **Lifecycle:** start, disable AP, register routes (your handlers). &#x20;
-
-### BLE control (BleICM)
-
-* **GATT characteristics** (Status, Wi-Fi, Peers, Topology, Sequences, Power, Export, OldApp).&#x20;
-* **Callbacks in-header**: security/server/characteristic callbacks follow the CarLock style.&#x20;
-* **Singleton & helpers**: `BleICM::instance`, `notifyStatus()`, advert LED task utilities. &#x20;
-
-### Logging (ICMLogFS)
-
-* **Domains & severities** for structured events; SD pins pulled from config. &#x20;
-* **APIs:** `event()/eventf()`, new log rotation, FS browsing, UART streaming.  &#x20;
-
-### Configuration (ConfigManager)
-
-* **NVS helpers**: `Put*` / `Get*` for bool/int/float/string/uint64.&#x20;
-* **System helpers**: restart/power-down simulation; countdown delays.&#x20;
-
-### RGB status LED
-
-* **Config-driven pins** + patterns (`startRainbow`, `startBlink`, `stop`), and direct RGB/hex control. &#x20;
-* Internally loads pins from NVS and initializes PWM/outputs.&#x20;
-
-### RTC & time (RTCManager)
-
-* **I2C/DS3231 init** from config pins; time set/get and system<->RTC sync. &#x20;
-* **Status utilities**: lost-power check, temperature read, 32 kHz output control.&#x20;
-
-### Sleep & wake (SleepTimer)
-
-* **Inactivity timer** with periodic check task; configurable timeout. &#x20;
-* **Alarms**: schedule sleep until epoch/DateTime; DS3231 Alarm1 helpers. &#x20;
-
----
-
-## Configuration & NVS keys
-
-* **Rule:** All stored keys are **≤ 6 characters** (kept project-wide for NVS). Example Wi-Fi/ESP-NOW keys: `ESCHNL`, `ESMODE`.&#x20;
-* **Network defaults:** AP IP/net and NTP settings reside in `Config.h`.&#x20;
-* Many modules read pins, names, and modes from `ConfigManager` at start. See each header’s *begin* docs for specifics.  &#x20;
-
----
-
-## Boot & runtime flow
-
-1. **WiFiManager** mounts FS, sets CORS, starts **AP** (and registers routes).  &#x20;
-2. Web UI (or BLE) pushes JSON **peers/topology**, which ESP-NOW applies.&#x20;
-3. Optional: start a **sequence** (UP/DOWN) to drive the chain.&#x20;
-4. **ICMLogFS** captures events per domain; logs are rotatable and streamable.&#x20;
-5. **RTCManager/SleepTimer** maintain time and manage inactivity sleeps. &#x20;
-
----
-
-## REST / Web UI pointers
-
-The AP comes up with permissive CORS so you can build a browser UI locally without hassles; add REST endpoints in `WiFiManager` when registering routes. &#x20;
-
-For UI data sources, use ESP-NOW JSON snapshots (peers/topology/export) exposed by the manager.&#x20;
+*(File names reflect the code you maintain in this repo.)*
 
 ---
 
 ## Build & flash
 
 * **Target:** ESP32 (Arduino core).
-* **Libraries used** (as seen in headers): `WiFi`, `ArduinoJson`, `RTClib`, BLE (`BLEDevice` et al.), SD/SPI, FreeRTOS tasks.    &#x20;
-* **Storage:** SPIFFS for small JSON/config files; SD for log archives via ICMLogFS. &#x20;
+* **Libraries:** WiFi, ArduinoJson, BLE (NimBLE/ESP32 BLE), SPIFFS/SD, RTClib, FreeRTOS.
+* **Flash:** Use Arduino IDE or PlatformIO. Ensure **Partition** supports SPIFFS/SD as configured.
 
 ---
 
-## Examples
+## Configuration (NVS keys)
 
-**Start a UP sequence** after configuring topology:
+All persisted keys are **≤6 chars** to keep Preferences tidy. Examples:
 
-```cpp
-espn.sequenceStart(ESPNowManager::SeqDir::UP);
-// ... later ...
-espn.sequenceStop();
-```
+* Wi-Fi AP: `WIFNAM` (SSID), `APPASS` (pass)
+* Wi-Fi STA: `STASSI`, `STAPSK`, `STAHNM`, `STADHC`
+* ESP-NOW: `ESCHNL` (channel), `ESMODE` (mode)
+* BLE: `BLENAM`, `BLPSWD`, `BLECON`
+* Buzzer: `BZGPIO` (pin), `BZAH` (active-high), `BZFEED` (enable)
 
+See `Config.h` for the authoritative list and defaults.
 
+---
 
-**Build UI snapshots** for peers & topology:
+## Networking modes (STA/AP) + ESP-NOW
 
-```cpp
-String peers   = espn.serializePeers();
-String topo    = espn.serializeTopology();
-String exportC = espn.serializeExport();
-```
+* **STA**: ICM attempts NVS creds first; on success, aligns ESP-NOW to the connected **channel**.
+* **AP**: if STA fails or config requested, ICM starts AP with NVS SSID/PASS and aligns ESP-NOW to AP channel.
+* **Channel alignment** is automatic after either mode changes.
 
+---
 
+## BLE control (BleICM)
+
+A single service exposes these characteristics (read/write/notify):
+
+* **Status** — snapshot `{mode, ip, ch, rssi?}`
+* **WiFi** — `{"cmd":"sta_connect","ssid","password"}` / `{"cmd":"ap_start","ap_ssid","ap_password","ch"}` / `{"cmd":"scan"}`
+* **Peers** — `{"cmd":"pair","mac","type"}` / `{"cmd":"remove","mac"}` / `{"cmd":"list"}`
+* **Topo** — `{"cmd":"set","links":[...]}` / `{"cmd":"get"}`
+* **Seq** — `{"cmd":"start", ...}` / `{"cmd":"stop"}`
+* **Power** — status hooks for PSM/battery
+* **Export** — `{"cmd":"export"}` → blob, `{"cmd":"import","config":{...}}`
+* **Compat** — basic string interface for legacy app commands
+
+**Security**: static passkey (from NVS), SC+MITM pairing, notifications enabled per characteristic.
+
+---
+
+## ESP-NOW peers, topology & sequences
+
+* **Peers**: add/remove and list all nodes participating in the mesh.
+* **Topology**: JSON `links` defines zone connectivity (start→end).
+* **Sequences**: trigger **UP (1-2-3)** or **DOWN (3-2-1)** activation per zone with per-step timings; the engine ignores opposite triggers while a direction is active (as per spec intent).&#x20;
+
+---
+
+## Logging & diagnostics
+
+* Domain/severity events to SD (`ICMLogFS`) with rotation and optional UART streaming tools.
+* Use this to trace AP/STA transitions, pairings, topology updates, and faults.
+
+---
+
+## RTC & scheduling
+
+* DS3231 time set/get and **system↔RTC** synchronization.
+* Hooks for future time-based activation (e.g., “lights on at 19:00”). The EasyDriveWay spec calls this out as a future enhancement; the firmware already provides RTC primitives to support it.&#x20;
+
+---
+
+## Cooling, sleep & power/buzzer cues
+
+* **CoolingManager** monitors thermals and runs the fan; can raise over-temp events.
+* **SleepTimer** handles inactivity sleeps and alarm-based wake.
+* **BuzzerManager** (NVS-driven) plays event tones:
+
+  * startup/ready, Wi-Fi connected/off, BLE pairing/paired/unpaired,
+  * client connect/disconnect, **power lost** / **on battery** / **low battery**, over-temp, fault, shutdown, success/failure.
+  * Enable/disable persisted via `BZFEED`.
+
+---
+
+## Security model
+
+* **Wi-Fi**: AP protected by NVS password; STA creds stored in NVS.
+* **BLE**: static passkey + SC MITM pairing; device name derived from NVS.
+* **Config**: factory reset path clears NVS and returns to AP config mode (tie to your reset button/flow).
+
+---
+
+## Spec trace to EasyDriveWay
+
+The EasyDriveWay system description identifies key functions and constraints; ICM maps them as follows:
+
+* **Driveway detection & sequential lights** → ESP-NOW **topology + sequences** control.&#x20;
+* **Wi-Fi interface for mobile app** → AP/STA + REST routes; permissive CORS for local UI.&#x20;
+* **Bluetooth interface** → implemented as **BleICM** (GATT): control + telemetry channels.&#x20;
+* **Timekeeping (future/NTP/RTC)** → **RTCManager** + NTP hooks in Wi-Fi layer.&#x20;
+* **BIT LED / health** → **RGBLed** status patterns (heartbeat, fault).&#x20;
+* **Reset to factory** → NVS wipe + AP mode for re-provisioning.&#x20;
+* **Store configuration data** → **ConfigManager** (short keys).&#x20;
+* **PSM / standby battery** → power cues and alarms surfaced via **BuzzerManager** + **Power** char.
 
 ---
 
 ## Troubleshooting
 
-* **AP didn’t start?** Check SPIFFS mount and AP bring-up logs in `ICMLogFS`. &#x20;
-* **No UI data?** Ensure peers/topology are configured (JSON “links”) before sequences. &#x20;
-* **Time drift?** Use RTC sync helpers to align system time and DS3231.&#x20;
+* **AP didn’t start**: check SPIFFS mount/logs; verify AP SSID/PASS in NVS.
+* **No sequences**: ensure `links` topology is applied, then trigger **UP/DOWN**.
+* **BLE “notify” not received**: confirm the client enabled notifications on each characteristic.
+* **Wrong ESP-NOW channel**: re-align by reconnecting STA or restarting AP; ICM persists channel in NVS.
 
 ---
 
 ## Roadmap
 
-* BLE-driven OTA control endpoints (log + progress).
-* Web UI for SD log browsing/streaming using ICMLogFS UART server.&#x20;
+* Web UI for SD log browsing & live tail.
+* OTA update flow exposed over BLE/Web.
+* Peer provisioning wizard and per-zone timing profiles.
 
 ---
 
-> *Tip:* Keep new NVS keys **≤ 6 chars** to match the current on-device convention and avoid namespace collisions in Preferences. See `Config.h` for examples.&#x20;
+## License
 
----
+Proprietary — © ICM/EasyDriveWay 
+
