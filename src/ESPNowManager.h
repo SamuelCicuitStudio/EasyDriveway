@@ -1,0 +1,229 @@
+/**************************************************************
+ *  Project     : ICM (Interface Control Module)
+ *  File        : ESPNowManager.h
+ **************************************************************/
+#pragma once
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#include <mbedtls/sha256.h>
+#include <ArduinoJson.h>
+
+#include "ConfigManager.h"
+#include "ICMLogFS.h"
+#include "RTCManager.h"
+#include "CommandAPI.h"  // opcodes / payloads / limits
+
+class ESPNowManager {
+public:
+  // ----- Types -----
+  enum class ModuleType : uint8_t { POWER=0, RELAY=1, PRESENCE=2 };
+
+  struct PeerRec {
+    bool     used = false;
+    ModuleType type = ModuleType::RELAY;
+    uint8_t  index = 0;
+    uint8_t  mac[6] = {0};
+    uint8_t  token16[16] = {0};
+    bool     online = false;
+    uint8_t  consecFails = 0;
+    int      activeTx = -1;
+    uint32_t lastSeen = 0;
+  };
+
+  // In-RAM topology mirrors (what we push to slaves)
+  struct RelayLink {
+    bool used = false;
+    uint8_t nextMac[6] = {0};
+    uint32_t nextIPv4 = 0;
+  };
+  struct SensorDep {
+    bool used = false;
+    uint8_t targetType = 1;  // relay
+    uint8_t targetIdx = 0;
+    uint8_t targetMac[6] = {0};
+    uint32_t targetIPv4 = 0;
+  };
+
+  // ACK callback types
+  typedef void (*OnAckFn)(const uint8_t mac[6], uint16_t ctr, uint8_t code);
+  typedef void (*OnPowerFn)(const uint8_t mac[6], const uint8_t* payload, size_t len);
+  typedef void (*OnRelayFn)(const uint8_t mac[6], uint8_t relayIdx, const uint8_t* payload, size_t len);
+  typedef void (*OnPresenceFn)(const uint8_t mac[6], uint8_t sensIdx, const uint8_t* payload, size_t len);
+  typedef void (*OnUnknownFn)(const uint8_t mac[6], const IcmMsgHdr& h, const uint8_t* payload, size_t len);
+
+public:
+  ESPNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc);
+
+  // ----- Lifecycle -----
+  bool begin(uint8_t channelDefault=1, const char* pmk16=nullptr);
+  void end();
+  void poll();  // call frequently from loop()
+
+  // ----- Callbacks -----
+  void setOnAck      (OnAckFn      fn) { _onAck = fn; }
+  void setOnPower    (OnPowerFn    fn) { _onPower = fn; }
+  void setOnRelay    (OnRelayFn    fn) { _onRelay = fn; }
+  void setOnPresence (OnPresenceFn fn) { _onPresence = fn; }
+  void setOnUnknown  (OnUnknownFn  fn) { _onUnknown = fn; }
+
+  // ----- Peers / Pairing API -----
+  bool pairPower(const String& macStr);
+  bool pairRelay(uint8_t idx, const String& macStr);
+  bool pairPresence(uint8_t idx, const String& macStr);
+  bool pairPresenceEntrance(const String& macStr);
+  bool pairPresenceParking (const String& macStr);
+  bool unpairByMac(const String& macStr);
+
+  // --------- Helpers asked by WiFiManager (new) ----------
+  // (1) CRUD / housekeeping
+  bool pair(const String& mac, const String& type);        // "power", "relay3", "sensor2", "entrance", "parking"
+  bool removePeer(const String& mac) { return unpairByMac(mac); }
+  void removeAllPeers();                                   // clear peers in esp-now (RAM only)
+  void clearAll();                                         // also clear NVS MAC+token+mode+channel
+
+  // (2) Query/serialize
+  String serializePeers() const;                           // JSON of peers + mode/channel + online
+  String serializeTopology() const;                        // JSON of current in-RAM topology links
+  String exportConfiguration() const;                      // peers + tokens + topology + ch/mode
+  String getEntranceSensorMac() const;                     // "" if not set
+
+  // (3) Channel / mode
+  bool setChannel(uint8_t ch, bool persist=true);
+  bool setSystemModeAuto(bool persist);
+  bool setSystemModeManual(bool persist);
+
+  // (4) Manual controls
+  bool powerGetStatus();
+  bool powerSetOutput(bool on);
+  bool powerRequestShutdown();
+  bool powerClearFault();
+  bool powerCommand(const String& action);                 // "on","off","shutdown","clear","status"
+  bool relayGetStatus(uint8_t idx);
+  bool relaySet(uint8_t idx, uint8_t ch, bool on);
+  bool relaySetMode(uint8_t idx, uint8_t ch, uint8_t mode);
+  bool relayManualSet(const String& mac, uint8_t ch, bool on); // via MAC
+  bool presenceGetStatus(uint8_t idx);
+  bool presenceSetMode(uint8_t idx, uint8_t mode);
+  bool sensorSetMode(const String& mac, bool autoMode);    // via MAC
+  bool sensorTestTrigger(const String& mac);               // SENS_TRIG (test)
+
+  // (5) Topology
+  bool topoSetRelayNext(uint8_t relayIdx, const uint8_t nextMac[6], uint32_t nextIPv4);
+  bool topoSetSensorDependency(uint8_t sensIdx, uint8_t targetRelayIdx, const uint8_t targetMac[6], uint32_t targetIPv4);
+  bool topoClearPeer(ModuleType t, uint8_t idx);
+  bool configureTopology(const JsonVariantConst& links);   // expect array of {type:"relay"/"sensor", ...}
+
+  // (6) Sequence
+  bool sequenceStart(SeqDir dir);
+  bool sequenceStop();
+  bool startSequence(const String& anchor, bool up);       // anchor is advisory; we broadcast anyway
+
+  // (7) Info
+  bool getPowerModuleInfo(JsonVariant out);
+
+  // ----- Utils -----
+  static String macBytesToStr(const uint8_t mac[6]);
+  static bool   macStrToBytes(const String& mac, uint8_t out[6]);
+  String icmMacStr();
+  bool isPeerOnline(ModuleType t, uint8_t index) const;
+
+private:
+  // ---------- NVS keys (<= 6 chars each) ----------
+  String keyMd() const { return String("ESMODE"); }   // system mode
+  String keyCh() const { return String("ESCHNL"); }   // channel
+
+  String keyTok(ModuleType t, uint8_t index);         // <=6 (already enforced)
+  String keyMac(ModuleType t, uint8_t index);         // <=6 (already enforced)
+
+  // ---------- Peers ----------
+  bool addOrUpdatePeer(ModuleType t, uint8_t index, const uint8_t mac[6]);
+  PeerRec* findPeer(ModuleType t, uint8_t index);
+  PeerRec* findPeerByMac(const uint8_t mac[6]);
+  bool ensurePeer(ModuleType t, uint8_t index, PeerRec*& out);
+
+  // ---------- Tokens ----------
+  void tokenCompute(const String& icmMac, const String& nodeMac, uint32_t counter, String& tokenHex32);
+  void tokenHexTo16(const String& hex, uint8_t out[16]);
+  bool loadOrCreateToken(ModuleType t, uint8_t index, const String& macStr, String& tokenHexOut, uint8_t token16Out[16]);
+
+  // ---------- Frame / Send ----------
+  struct PendingTx {
+    bool used = false;
+    uint8_t mac[6] = {0};
+    uint8_t frame[250];
+    uint16_t len = 0;
+    uint8_t  dom = 0;
+    uint8_t  op = 0;
+    uint16_t ctr = 0;
+    bool requireAck = true;
+    uint8_t retriesLeft = 0;
+    uint32_t deadlineMs = 0;
+    uint32_t backoffMs = 0;
+  };
+  static constexpr int MAX_PENDING = 8;
+
+  void   fillHeader(IcmMsgHdr& h, CmdDomain dom, uint8_t op, uint8_t flags, const uint8_t token16[16]);
+  bool   enqueueToPeer(PeerRec* pr, CmdDomain dom, uint8_t op, const uint8_t* body, size_t blen, bool requireAck);
+  void   startSend(int pidx);
+  void   scheduleRetry(PendingTx& tx);
+  void   markPeerFail(PeerRec* pr);
+  void   markPeerOk(PeerRec* pr);
+  int    allocPending();
+  void   freePending(int idx);
+  int    findPendingForPeer(const uint8_t mac[6]);
+
+  // ---------- Callbacks from ESP-NOW ----------
+  static void onRecvThunk(const uint8_t *mac, const uint8_t *data, int len);
+  static void onSentThunk(const uint8_t *mac, esp_now_send_status_t status);
+  void onRecv(const uint8_t *mac, const uint8_t *data, int len);
+  void onSent(const uint8_t *mac, esp_now_send_status_t status);
+  void handleAck(const uint8_t mac[6], const IcmMsgHdr& h, const uint8_t* payload, int plen);
+  bool tokenMatches(const PeerRec* pr, const IcmMsgHdr& h) const;
+
+  // ---------- Small helpers ----------
+  uint16_t nextCtr() { return ++_ctr; }
+  void reAddAllPeersOnChannel();
+
+private:
+  // Singleton for static callbacks
+  static ESPNowManager* s_inst;
+
+  ConfigManager* _cfg = nullptr;
+  ICMLogFS*      _log = nullptr;
+  RTCManager*    _rtc = nullptr;
+
+  // peers
+  PeerRec  _power;
+  PeerRec  _relays[ICM_MAX_RELAYS];
+  PeerRec  _sensors[ICM_MAX_SENSORS];
+  PeerRec  _entrance; // special
+  PeerRec  _parking;  // special
+
+  // topology mirrors
+  RelayLink _relayTopo[ICM_MAX_RELAYS];
+  SensorDep _sensorTopo[ICM_MAX_SENSORS];
+  SensorDep _entrTopo;   // entrance
+  SensorDep _parkTopo;   // parking
+
+  // send queue
+  PendingTx _pending[MAX_PENDING];
+  uint8_t   _maxRetries     = 3;
+  uint32_t  _ackTimeoutMs   = 300;  // wait for ACK after MAC success
+  uint32_t  _retryBackoffMs = 150;  // next try
+
+  // config/runtime
+  uint8_t   _channel = 1;
+  uint8_t   _mode    = MODE_AUTO;
+  bool      _started = false;
+  uint16_t  _ctr     = 0;
+  char      _pmk[17] = {0};
+
+  // user callbacks
+  OnAckFn      _onAck = nullptr;
+  OnPowerFn    _onPower = nullptr;
+  OnRelayFn    _onRelay = nullptr;
+  OnPresenceFn _onPresence = nullptr;
+  OnUnknownFn  _onUnknown = nullptr;
+};
