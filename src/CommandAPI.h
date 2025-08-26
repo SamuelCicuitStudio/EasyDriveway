@@ -47,14 +47,16 @@ enum : uint8_t {
   PWR_GET       = 0x10,
   PWR_SET       = 0x11,   // body: uint8_t on(0/1)
   PWR_REQSDN    = 0x12,
-  PWR_CLRF      = 0x13
+  PWR_CLRF      = 0x13,
+  PWR_GET_TEMP  = 0x14
 };
 
 // ======================= Relay Ops ============================
 enum : uint8_t {
   REL_GET       = 0x20,
   REL_SET_CH    = 0x21,   // body: uint8_t ch, uint8_t on
-  REL_SET_MODE  = 0x22    // body: uint8_t ch, uint8_t mode(0 auto/1 manual)
+  REL_SET_MODE  = 0x22,    // body: uint8_t ch, uint8_t mode(0 auto/1 manual)
+  REL_GET_TEMP  = 0x23
 };
 
 // ======================= Sensor Ops ===========================
@@ -138,4 +140,11 @@ struct __attribute__((packed)) TopoRelayBundle {
   uint8_t  nextMac[6];     // next relay MAC
   uint8_t  nextTok16[16];  // token that NEXT RELAY expects in header
   uint32_t nextIPv4;       // next relay IPv4 (network order)
+};// ======================= Telemetry payloads ===================
+// Temperature reply (used by PWR_GET_TEMP and REL_GET_TEMP)
+struct __attribute__((packed)) TempPayload {
+  int16_t tC_x100;   // temperature in °C × 100 (e.g. 3256 -> 32.56°C)
+  int16_t raw;       // optional raw ADC / sensor code (or 0 if N/A)
+  uint8_t ok;        // 1=valid reading, 0=not available
+  uint8_t src;       // sensor index/type at the module (freeform)
 };

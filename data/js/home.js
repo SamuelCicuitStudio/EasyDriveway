@@ -21,35 +21,68 @@
   const sleepSchedule = $('sleepSchedule'), sleepReset = $('sleepReset');
   const sleepLeft = $('sleepLeft'), sleepArmed = $('sleepArmed'), sleepWake = $('sleepWake');
 
+  // Logout
+  const logoutBtn = $('logoutBtn');
+
+  // Toast
   const toast = $('toast');
   const toastMsg = (t)=>{ toast.textContent=t||'Saved'; toast.hidden=false; setTimeout(()=>toast.hidden=true,1600); };
 
+  // Helpers
   const fmtUptime = (ms) => {
     const s = Math.floor(ms/1000), d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), ss=s%60;
     return `${d}d ${h}h ${m}m ${ss}s`;
   };
   const fmtEpoch = (e)=> e? new Date(e*1000).toISOString().replace('T',' ').replace('Z',''): '—';
 
+  // Color helpers
+  const BADGE_STATES = ['badge-ok','badge-warn','badge-danger','badge-info'];
+  const TEXT_STATES  = ['text-ok','text-warn','text-danger','text-info','text-muted'];
+
+  function setBadge(el, state /* ok|warn|danger|info */) {
+    if (!el) return;
+    el.classList.remove(...BADGE_STATES);
+    if (state) el.classList.add(`badge-${state}`);
+  }
+  function setText(el, text, state /* ok|warn|danger|info|muted */) {
+    if (!el) return;
+    el.textContent = (text ?? '—');
+    el.classList.remove(...TEXT_STATES);
+    if (state) el.classList.add(`text-${state}`);
+    el.classList.add('value');
+  }
+
+  // -------- Refresh --------
   async function refresh() {
     try{
       const res = await fetch('/api/system/status', {cache:'no-store'});
+      if (res.status === 401) { location.href = '/login.html'; return; }
       if (!res.ok) throw new Error('HTTP '+res.status);
       const j = await res.json();
 
       // Mode + Wi-Fi
-      modeBadge.textContent = j.mode || 'AUTO';
-      modeVal.textContent   = (j.mode === 'MANUAL') ? 'Manual' : (j.mode || 'Auto');
+      const mode = j.mode || 'AUTO';
+      setBadge(modeBadge, mode === 'MANUAL' ? 'warn' : 'ok');
+      setText(modeVal, mode === 'MANUAL' ? 'Manual' : 'Auto', mode === 'MANUAL' ? 'warn' : 'ok');
+
       const wifi = j.wifi || {};
-      wifiVal.textContent = wifi.mode ? `${wifi.mode} ${wifi.ip||''}`.trim() : '—';
+      const wifiMode = wifi.mode || 'OFF';
+      const wifiStr = wifiMode ? `${wifiMode} ${wifi.ip||''}`.trim() : '—';
+      const wifiColor = (wifiMode === 'STA') ? 'ok' : (wifiMode === 'AP' ? 'info' : 'danger');
+      setText(wifiVal, wifiStr, wifiColor);
 
       // Power + Faults
       const pwr = j.power || {};
-      pwrBadge.textContent = pwr.source || '—';
-      pwrSrc.textContent = (pwr.source==='BATTERY')?'On battery':(pwr.source==='WALL'?'Wall power':'Unknown');
-      pwrHlth.textContent = pwr.ok ? 'OK' : (pwr.detail || 'Check');
+      const psrc = pwr.source || 'Unknown';
+      setBadge(pwrBadge, psrc === 'BATTERY' ? 'warn' : (psrc === 'WALL' ? 'ok' : 'info'));
+      setText(pwrSrc, (psrc==='BATTERY')?'On battery':(psrc==='WALL'?'Wall power':'Unknown'),
+              psrc === 'BATTERY' ? 'warn' : (psrc === 'WALL' ? 'ok' : 'info'));
+      setText(pwrHlth, pwr.ok ? 'OK' : (pwr.detail || 'Check'), pwr.ok ? 'ok' : 'danger');
 
+      // Faults list
       faultList.innerHTML = '';
       const faults = j.health && Array.isArray(j.health.faults) ? j.health.faults : [];
+      setBadge(fltBadge, faults.length ? 'danger' : 'ok');
       fltBadge.textContent = faults.length ? faults.length : 'OK';
       if (!faults.length) {
         const li=document.createElement('li'); li.className='ok'; li.textContent='No faults'; faultList.appendChild(li);
@@ -58,33 +91,44 @@
       }
 
       // Time & Uptime
-      timeNow.textContent = (j.time && j.time.iso) || '—';
-      if (typeof j.uptime_ms === 'number') uptime.textContent = fmtUptime(j.uptime_ms);
+      setText(timeNow, (j.time && j.time.iso) || '—', 'info');
+      if (typeof j.uptime_ms === 'number') setText(uptime, fmtUptime(j.uptime_ms), 'muted');
 
       // Buzzer
       if (typeof j.buzzer_enabled === 'boolean') buzzerToggle.checked = !!j.buzzer_enabled;
 
       // Cooling status
       const c = j.cooling || {};
-      tempVal.textContent = (typeof c.tempC === 'number') ? c.tempC.toFixed(1) : '—';
-      rtcTemp.textContent = (j.time && typeof j.time.tempC === 'number') ? j.time.tempC.toFixed(1) : '—';
-      coolBadge.textContent = c.modeApplied || '—';
-      coolApplied.textContent = c.modeApplied || '—';
-      coolPct.textContent = (typeof c.speedPct === 'number') ? c.speedPct : 0;
-      if (typeof c.speedPct === 'number') coolSpeed.value = c.speedPct;
+      setText(tempVal, (typeof c.tempC === 'number') ? c.tempC.toFixed(1) : '—',
+              (typeof c.tempC === 'number' && c.tempC >= 55) ? 'danger' :
+              (typeof c.tempC === 'number' && c.tempC >= 45) ? 'warn' : 'ok');
+      setText(rtcTemp, (j.time && typeof j.time.tempC === 'number') ? j.time.tempC.toFixed(1) : '—', 'muted');
+
+      const coolState = (c.modeApplied || 'AUTO');
+      const coolColor = (coolState === 'FORCED') ? 'warn' :
+                        (coolState === 'STOPPED') ? 'danger' :
+                        (coolState === 'ECO') ? 'info' : 'ok';
+      setBadge(coolBadge, coolColor);
+      setText(coolApplied, coolState, coolColor);
+
+      if (typeof c.speedPct === 'number') {
+        coolSpeed.value = c.speedPct;
+        setText(coolPct, c.speedPct, (c.speedPct >= 80) ? 'warn' : 'info');
+      }
       if (c.modeRequested) coolMode.value = c.modeRequested;
 
       // Sleep status
       const s = j.sleep || {};
       if (typeof s.timeout_sec === 'number') sleepTimeout.value = s.timeout_sec;
-      sleepLeft.textContent = (typeof s.secs_to_sleep === 'number') ? s.secs_to_sleep : '—';
-      sleepArmed.textContent = s.armed ? 'Yes' : 'No';
-      sleepWake.textContent = s.next_wake_epoch ? fmtEpoch(s.next_wake_epoch) : '—';
+      setText(sleepLeft, (typeof s.secs_to_sleep === 'number') ? s.secs_to_sleep : '—',
+              (typeof s.secs_to_sleep === 'number' && s.secs_to_sleep < 30) ? 'warn' : 'muted');
+      setText(sleepArmed, s.armed ? 'Yes' : 'No', s.armed ? 'info' : 'muted');
+      setText(sleepWake, s.next_wake_epoch ? fmtEpoch(s.next_wake_epoch) : '—', 'info');
 
     }catch(e){ console.error(e); }
   }
 
-  // Cooling: mode select
+  // -------- Cooling --------
   coolMode.addEventListener('change', async () => {
     const mode = coolMode.value;
     try{
@@ -98,8 +142,7 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
-  // Cooling: manual speed
-  coolSpeed.addEventListener('input', ()=>{ coolPct.textContent = coolSpeed.value; });
+  coolSpeed.addEventListener('input', ()=>{ setText(coolPct, coolSpeed.value, (coolSpeed.value>=80)?'warn':'info'); });
   coolSpeed.addEventListener('change', async () => {
     try{
       const pct = parseInt(coolSpeed.value,10) || 0;
@@ -113,7 +156,7 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
-  // Buzzer toggle
+  // -------- Buzzer toggle --------
   buzzerToggle.addEventListener('change', async () => {
     try{
       const res = await fetch('/api/buzzer/set', {
@@ -125,7 +168,7 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
-  // Reset / Restart
+  // -------- Reset / Restart --------
   btnReset.addEventListener('click', async () => {
     if (!confirm('Factory reset settings?')) return;
     try{
@@ -145,7 +188,7 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
-  // Sleep timer controls
+  // -------- Sleep controls --------
   sleepApply.addEventListener('click', async () => {
     try{
       const timeout_sec = parseInt(sleepTimeout.value, 10) || 60;
@@ -181,7 +224,16 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
-  // initial + poll
+  // -------- Logout (server-side redirect) --------
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      const f = document.createElement('form');
+      f.method = 'POST'; f.action = '/logout';
+      document.body.appendChild(f); f.submit();
+    });
+  }
+
+  // Kickoff
   refresh();
   setInterval(refresh, 3000);
 })();

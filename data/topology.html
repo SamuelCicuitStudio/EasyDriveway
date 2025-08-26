@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ICM · Topology</title>
+  <link rel="stylesheet" href="css/topology.css">
+  <link rel="icon" href="/favicon.ico">
+</head>
+<body>
+  <div class="frame">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+         <svg viewBox="0 0 24 24" role="img" aria-label="Network">
+           <circle cx="6" cy="12" r="2"></circle>
+           <circle cx="12" cy="6"  r="2"></circle>
+           <circle cx="18" cy="12" r="2"></circle>
+           <path d="M8 12 L10 12 L12 8 L16 8 L16 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+           <path d="M14 12 L16 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+         </svg>
+       </div>
+        <div class="title">Interface Control Module</div>
+      </div>
+      <nav class="nav">
+        <a href="/home.html">Home</a>
+        <a href="/settings.html">Settings</a>
+        <a href="/wifi.html">Wi-Fi</a>
+        <a href="/topology.html" class="active">Topology</a>
+        <a href="/live.html">Live</a>
+      </nav>
+      <div class="logout">
+        <button id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero-card">
+      <svg class="home-hero" viewBox="0 0 24 24" width="56" height="56" aria-hidden="true">
+         <circle cx="6" cy="12" r="2"></circle>
+         <circle cx="12" cy="6"  r="2"></circle>
+         <circle cx="18" cy="12" r="2"></circle>
+         <path d="M8 12 L10 12 L12 8 L16 8 L16 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+         <path d="M14 12 L16 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+       </svg>
+      <div class="hero-text">
+        <h2>Topology</h2>
+        <p>Pair devices by MAC, then drag them into the linear chain.</p>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="wrap">
+      <div class="grid grid-3">
+        <!-- LEFT: Paired Devices (palette) -->
+        <section class="card card-palette">
+          <header>
+            <h3>Paired Devices</h3>
+            <span class="badge badge-info">Drag to chain</span>
+          </header>
+          <div id="palette" class="palette scrollable" aria-label="Drag items into the chain"></div>
+        </section>
+
+        <!-- MIDDLE: Chain Builder -->
+        <section class="card card-chain">
+          <header>
+            <h3>Chain Builder</h3>
+            <span class="badge">Linear</span>
+          </header>
+
+          <div id="lane" class="lane" aria-label="Drop modules here">
+            <div class="lane-hint">Drag paired items here in order. The order defines <strong>prev/next</strong>.</div>
+          </div>
+
+          <div class="chain-actions">
+            <button id="btnClear" class="btn danger">Clear</button>
+            <button id="btnLoad" class="btn">Load</button>
+            <button id="btnSave" class="btn">Save</button>
+            <button id="btnPush" class="btn warn">Push</button>
+            <button id="btnExport" class="btn">Export</button>
+            <label for="fileImport" class="btn">Import</label>
+            <input id="fileImport" type="file" accept="application/json" hidden/>
+          </div>
+        </section>
+
+        <!-- RIGHT: Selected -->
+        <section class="card card-selected">
+          <header><h3>Selected</h3></header>
+
+          <div id="selNone" class="kv"><label>Info</label><div>No selection</div></div>
+
+          <!-- Dynamic selection panel -->
+          <div id="selInfo" hidden>
+            <!-- Common -->
+            <div class="row smallgap">
+              <div class="kv">
+                <label>Type</label><div id="siKind" class="value"></div>
+              </div>
+              <div class="kv">
+                <label>MAC</label><div id="siMac" class="value mono"></div>
+              </div>
+            </div>
+
+            <!-- SENSOR panel -->
+            <div id="panelSensor" class="kv lg" hidden>
+              <label>Sensor</label>
+              <div class="row smallgap g-row">
+                <div class="gauge" id="gSensTemp" data-unit="°C"></div>
+                <div class="kv"><label>Status</label><div id="siSensStatus">—</div></div>
+              </div>
+              <div class="controls">
+                <button id="tRead" class="btn">Read</button>
+              </div>
+            </div>
+
+            <!-- RELAY panel -->
+            <div id="panelRelay" class="kv lg" hidden>
+              <label>Relay</label>
+              <div class="row smallgap g-row">
+                <div class="kv"><label>State</label><div id="siRelState" class="value">—</div></div>
+                <div class="gauge" id="gRelTemp" data-unit="°C"></div>
+              </div>
+              <div class="controls">
+                <button id="tOn" class="btn">ON</button>
+                <button id="tOff" class="btn">OFF</button>
+              </div>
+            </div>
+
+            <!-- POWER panel (not in chain) -->
+            <div id="panelPower" class="kv lg" hidden>
+              <label>Power Module</label>
+              <div class="row smallgap g-row">
+                <div class="gauge" id="gPwrVolt" data-unit="V"></div>
+                <div class="gauge" id="gPwrCurr" data-unit="A"></div>
+                <div class="gauge" id="gPwrTemp" data-unit="°C"></div>
+              </div>
+              <div class="controls">
+                <button id="pwrOn" class="btn">Power ON</button>
+                <button id="pwrOff" class="btn danger">Power OFF</button>
+              </div>
+              <div class="sub">Power modules are required but are not placed in the chain.</div>
+            </div>
+          </div>
+
+          <div id="toast" class="toast" hidden>Done</div>
+        </section>
+
+        <!-- BOTTOM LEFT: Peers -->
+        <section class="card card-peers">
+          <header>
+            <h3>Peers</h3>
+            <span class="badge badge-info" id="peersCount">0</span>
+          </header>
+          <div class="row smallgap peers-controls">
+            <input id="peerSearch" type="text" placeholder="Search MAC…" />
+            <button id="btnRefreshPeers" class="btn">Refresh</button>
+          </div>
+          <div class="peers scrollable" id="peersScroll">
+            <table class="tbl" id="peersTbl">
+              <thead><tr>
+                <th>Type</th><th>MAC</th><th>Online</th><th>Test</th><th>Remove</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- BOTTOM MIDDLE: Pair / Remove -->
+        <section class="card card-pair">
+          <header><h3>Pair / Remove</h3></header>
+          <div class="pair-body scrollable">
+            <div class="kv">
+              <label>Pair New (type + MAC)</label>
+              <div class="row">
+                <select id="pType">
+                  <option value="power">Power</option>
+                  <option value="relay">Relay</option>
+                  <option value="sensor">Sensor</option>
+                  <option value="entrance">Entrance</option>
+                  <option value="parking">Parking</option>
+                </select>
+              </div>
+              <input id="pMac" type="text" placeholder="AA:BB:CC:DD:EE:FF"/>
+              <button id="btnPair" class="btn">Pair</button>
+            </div>
+
+            <div class="kv">
+              <label>Remove by MAC</label>
+              <input id="rMac" type="text" placeholder="AA:BB:CC:DD:EE:FF"/>
+              <button id="btnRemove" class="btn danger">Remove</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPORTANT: load the mock BEFORE the real binder if you are using a mock -->
+  <script src="js/topology.mock.js"></script>
+  <script src="js/topology.js"></script>
+</body>
+</html>

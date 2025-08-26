@@ -144,7 +144,19 @@ public:
   String icmMacStr();
   bool isPeerOnline(ModuleType t, uint8_t index) const;
   RTCManager* rtc() const { return _rtc; };
+  // ----- (4) Manual controls / queries (add these) -----
+  bool powerGetTemperature();                 // send PWR_GET_TEMP
+  bool relayGetTemperature(uint8_t idx);      // send REL_GET_TEMP to relay[idx]
 
+  // ----- (7) Info (add getters) -----
+  float lastPowerTempC() const { return _pwrTempC; }
+  float lastRelayTempC(uint8_t idx) const {
+    return (idx < ICM_MAX_RELAYS) ? _relTempC[idx] : NAN;
+  }
+  uint32_t lastTempUpdateMsPower() const { return _pwrTempMs; }
+  uint32_t lastTempUpdateMsRelay(uint8_t idx) const {
+    return (idx < ICM_MAX_RELAYS) ? _relTempMs[idx] : 0;
+  }
 
 private:
   // ---------- NVS keys (<= 6 chars each) ----------
@@ -245,6 +257,13 @@ private:
   bool      _started = false;
   uint16_t  _ctr     = 0;
   char      _pmk[17] = {0};
+
+  // temperature caches (updated on replies)
+  float    _pwrTempC = NAN;
+  uint32_t _pwrTempMs = 0;
+
+  float    _relTempC[ICM_MAX_RELAYS] = { NAN };
+  uint32_t _relTempMs[ICM_MAX_RELAYS] = { 0 };
 
   // user callbacks
   OnAckFn      _onAck = nullptr;

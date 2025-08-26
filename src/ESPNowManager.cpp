@@ -26,6 +26,9 @@ bool ESPNowManager::begin(uint8_t channelDefault, const char* pmk16) {
   // Try to load a saved topology mirror
   loadTopologyFromNvs();
 
+  for (size_t i=0; i<ICM_MAX_RELAYS; ++i) { _relTempC[i] = NAN; _relTempMs[i] = 0; }
+  _pwrTempC = NAN; _pwrTempMs = 0;
+
   WiFi.mode(WIFI_STA);
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
@@ -720,15 +723,41 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
     case CmdDomain::SYS:
       if (h->op == SYS_ACK) { handleAck(mac, *h, payload, plen); }
       break;
-    case CmdDomain::POWER:
+
+    case CmdDomain::POWER: {
+      // Intercept temperature reply
+      if (h->op == PWR_GET_TEMP) {
+        float tC;
+        if (decodeTempPayload(payload, plen, tC)) {
+          _pwrTempC  = tC;
+          _pwrTempMs = millis();
+          LOGI(1600,"POWER temp=%.2fC", tC);
+        }
+      }
+      // Fan out to user callback unchanged
       if (_onPower) _onPower(mac, payload, (size_t)plen);
       break;
-    case CmdDomain::RELAY:
+    }
+
+    case CmdDomain::RELAY: {
+      if (h->op == REL_GET_TEMP) {
+        float tC;
+        if (decodeTempPayload(payload, plen, tC)) {
+          if (pr->index < ICM_MAX_RELAYS) {
+            _relTempC[pr->index]  = tC;
+            _relTempMs[pr->index] = millis();
+            LOGI(1601,"RELAY[%u] temp=%.2fC", pr->index, tC);
+          }
+        }
+      }
       if (_onRelay) _onRelay(mac, pr->index, payload, (size_t)plen);
       break;
+    }
+
     case CmdDomain::SENS:
       if (_onPresence) _onPresence(mac, pr->index, payload, (size_t)plen);
       break;
+
     default:
       if (_onUnknown) _onUnknown(mac, *h, payload, (size_t)plen);
       break;
@@ -1035,4 +1064,23 @@ bool ESPNowManager::isPeerOnline(ModuleType t, uint8_t index) const {
       break;
   }
   return (pr && pr->used && pr->online);
+}
+// ========= new request methods =========
+bool ESPNowManager::powerGetTemperature() {
+  // requires a paired POWER peer
+  if (!_power.used) return false;
+  return enqueueToPeer(&_power, CmdDomain::POWER, PWR_GET_TEMP, nullptr, 0, true);
+}
+bool ESPNowManager::relayGetTemperature(uint8_t idx) {
+  PeerRec* pr = nullptr; if(!ensurePeer(ModuleType::RELAY, idx, pr)) return false;
+  return enqueueToPeer(pr, CmdDomain::RELAY, REL_GET_TEMP, nullptr, 0, true);
+}
+
+// ========= helper to decode TempPayload =========
+static inline bool decodeTempPayload(const uint8_t* p, int n, float& tCout) {
+  if (n < (int)sizeof(TempPayload)) return false;
+  const TempPayload* tp = (const TempPayload*)p;
+  if (!tp->ok) return false;
+  tCout = ((float)tp->tC_x100) / 100.0f;
+  return true;
 }

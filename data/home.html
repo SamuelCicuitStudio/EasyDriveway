@@ -1,164 +1,195 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta http-equiv="Cache-Control" content="no-store, must-revalidate" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ICM — Home</title>
-  <link rel="stylesheet" href="css/home.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=900, initial-scale=1"/>
+  <title>ICM · Home</title>
+  <link rel="stylesheet" href="css/home.css">
+  <link rel="icon" href="/favicon.ico">
 </head>
 <body>
   <div class="frame">
-    <header class="topbar">
+    <!-- Top Bar -->
+    <div class="topbar">
       <div class="brand">
-        <span class="logo">ICM</span>
-        <span class="title">Interface Control Module</span>
+        <div class="logo">ICM</div>
+        <div class="title">Interface Control Module</div>
       </div>
       <nav class="nav">
-        <a href="home.html" class="active">Home</a>
-        <a href="settings.html">Settings</a>
-        <a href="wifi.html">Wi-Fi</a>
-        <a href="topology.html">Topology</a>
-        <a href="live.html">Live</a>
-        <form class="logout" action="/logout" method="post">
-          <button type="submit" title="Sign out">Logout</button>
-        </form>
+        <a href="/home.html" class="active">Home</a>
+        <a href="/settings.html">Settings</a>
+        <a href="/wifi.html">Wi-Fi</a>
+        <a href="/topology.html">Topology</a>
+        <a href="/live.html">Live</a>
       </nav>
-    </header>
+      <div class="logout">
+        <button id="logoutBtn" title="Logout">Logout</button>
+      </div>
+    </div>
 
-    <!-- compact hero with a big house icon -->
-    <aside class="hero-card">
-      <svg class="home-hero" viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M32 8L6 28h5v20a4 4 0 0 0 4 4h10V38h14v14h10a4 4 0 0 0 4-4V28h5L32 8z" />
+    <!-- Hero -->
+    <div class="hero-card">
+      <svg class="home-hero" viewBox="0 0 24 24" width="64" height="64" aria-hidden="true">
+        <path d="M12 3l9 7v11a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V10l9-7zM2 10l10-8 10 8"/>
       </svg>
       <div class="hero-text">
         <h2>Home</h2>
         <p>Overview & quick controls</p>
       </div>
-    </aside>
+    </div>
 
-    <main class="wrap">
-      <section class="grid">
-        <!-- Row 1 -->
-        <article class="card">
+    <!-- Content -->
+    <div class="wrap">
+      <div class="grid">
+
+        <!-- System Overview -->
+        <section class="card">
           <header>
-            <h3>System Mode</h3>
-            <span id="modeBadge" class="badge">—</span>
+            <h3>System</h3>
+            <span id="modeBadge" class="badge">AUTO</span>
           </header>
-          <div class="row">
-            <div class="kv"><label>Mode</label><div id="modeVal">—</div></div>
-            <div class="kv"><label>Wi-Fi</label><div id="wifiVal">—</div></div>
+          <div class="row smallgap">
+            <div class="kv">
+              <label>Mode</label>
+              <div id="modeVal" class="value text-ok">Auto</div>
+            </div>
+            <div class="kv">
+              <label>Wi-Fi</label>
+              <div id="wifiVal" class="value text-info">—</div>
+            </div>
           </div>
-        </article>
+        </section>
 
-        <article class="card">
+        <!-- Power -->
+        <section class="card">
           <header>
             <h3>Power</h3>
             <span id="pwrBadge" class="badge">—</span>
           </header>
-          <div class="row">
-            <div class="kv"><label>Source</label><div id="pwrSrc">—</div></div>
-            <div class="kv"><label>Health</label><div id="pwrHlth">—</div></div>
+          <div class="row smallgap">
+            <div class="kv">
+              <label>Source</label>
+              <div id="pwrSrc" class="value text-muted">—</div>
+            </div>
+            <div class="kv">
+              <label>Health</label>
+              <div id="pwrHlth" class="value text-ok">OK</div>
+            </div>
           </div>
-        </article>
+        </section>
 
-        <!-- Row 2 -->
-        <article class="card">
-          <header>
-            <h3>Time</h3>
-            <span class="badge">RTC</span>
-          </header>
-          <div class="row">
-            <div class="kv"><label>Now</label><div id="timeNow">—</div></div>
-            <div class="kv"><label>Uptime</label><div id="uptime">—</div></div>
+        <!-- Time / Uptime -->
+        <section class="card">
+          <header><h3>Time</h3></header>
+          <div class="row smallgap">
+            <div class="kv lg">
+              <label>Now</label>
+              <div id="timeNow" class="value text-info">—</div>
+              <div class="sub">RTC preferred; system clock fallback</div>
+            </div>
+            <div class="kv">
+              <label>Uptime</label>
+              <div id="uptime" class="value text-muted">—</div>
+            </div>
           </div>
-        </article>
+        </section>
 
-        <article class="card">
+        <!-- Faults -->
+        <section class="card">
           <header>
             <h3>Faults</h3>
-            <span id="fltBadge" class="badge">—</span>
+            <span id="fltBadge" class="badge badge-ok">OK</span>
           </header>
-          <ul id="faultList" class="list"></ul>
-        </article>
+          <ul id="faultList" class="list">
+            <li class="ok">No faults</li>
+          </ul>
+        </section>
 
-        <!-- Row 3: Cooling (L) + Sleep (R) -->
-        <article class="card">
+        <!-- Cooling -->
+        <section class="card">
           <header>
-            <h3>Temperature & Cooling</h3>
-            <span id="coolBadge" class="badge">—</span>
+            <h3>Cooling</h3>
+            <span id="coolBadge" class="badge">AUTO</span>
           </header>
           <div class="cool-grid">
-            <div class="kv lg">
-              <label>Module Temperature</label>
-              <div class="temp"><span id="tempVal">—</span><small>°C</small></div>
-              <div class="sub">RTC Temp: <span id="rtcTemp">—</span> °C</div>
+            <div class="kv">
+              <label>Module Temp</label>
+              <div class="temp"><span id="tempVal" class="value">—</span><small>°C</small></div>
             </div>
             <div class="kv">
-              <label>Fan Mode</label>
+              <label>RTC Temp</label>
+              <div class="temp"><span id="rtcTemp" class="value text-muted">—</span><small>°C</small></div>
+            </div>
+            <div class="kv">
+              <label>Mode</label>
               <select id="coolMode">
-                <option value="AUTO">Auto</option>
-                <option value="ECO">Eco</option>
-                <option value="NORMAL">Normal</option>
-                <option value="FORCED">Forced</option>
-                <option value="STOPPED">Stopped</option>
+                <option value="AUTO">AUTO</option>
+                <option value="ECO">ECO</option>
+                <option value="NORMAL">NORMAL</option>
+                <option value="FORCED">FORCED</option>
+                <option value="STOPPED">STOPPED</option>
               </select>
-              <div class="sub">Applied: <span id="coolApplied">—</span></div>
+              <div class="sub">Applied: <span id="coolApplied" class="value">—</span></div>
             </div>
             <div class="kv">
-              <label>Manual Speed</label>
-              <input id="coolSpeed" class="range" type="range" min="0" max="100" step="1" value="0" />
-              <div class="sub">Current: <span id="coolPct">0</span>%</div>
+              <label>Speed</label>
+              <input id="coolSpeed" class="range" type="range" min="0" max="100" value="0"/>
+              <div class="sub">Fan: <span id="coolPct" class="value text-info">0</span>%</div>
             </div>
           </div>
-        </article>
+        </section>
 
-        <article class="card">
+        <!-- Sleep -->
+        <section class="card">
           <header>
-            <h3>Sleep Timer</h3>
-            <span id="sleepBadge" class="badge">—</span>
+            <h3>Sleep</h3>
+            <span id="sleepBadge" class="badge badge-info">ARMED</span>
           </header>
           <div class="sleep-grid">
             <div class="kv">
               <label>Inactivity Timeout (sec)</label>
-              <div class="row smallgap">
-                <input id="sleepTimeout" type="number" min="5" step="5" value="600" />
-                <button id="sleepApply" class="btn">Apply</button>
-              </div>
-              <div class="sub">Seconds to sleep: <span id="sleepLeft">—</span></div>
+              <input id="sleepTimeout" type="number" min="5" step="5" value="600"/>
+              <div class="controls"><button id="sleepApply" class="btn">Apply</button></div>
             </div>
-
             <div class="kv">
-              <label>Manual Sleep</label>
-              <div class="row smallgap">
-                <input id="sleepAfter" type="number" min="1" step="1" value="60" />
-                <button id="sleepSchedule" class="btn warn">Sleep after (s)</button>
+              <label>Sleep After (sec)</label>
+              <input id="sleepAfter" type="number" min="1" step="1" value="60"/>
+              <div class="controls">
+                <button id="sleepSchedule" class="btn">Schedule</button>
+                <button id="sleepReset" class="btn">Reset Inactivity</button>
               </div>
-              <div class="row smallgap">
-                <button id="sleepReset" class="btn">Reset inactivity</button>
-              </div>
-              <div class="sub">Armed: <span id="sleepArmed">—</span> | Next wake: <span id="sleepWake">—</span></div>
+            </div>
+            <div class="kv">
+              <label>Seconds to Sleep</label>
+              <div id="sleepLeft" class="value text-muted">—</div>
+            </div>
+            <div class="kv">
+              <label>Next Wake</label>
+              <div id="sleepWake" class="value text-info">—</div>
+              <div class="sub">Armed: <span id="sleepArmed" class="value text-info">—</span></div>
             </div>
           </div>
-        </article>
+        </section>
 
-        <!-- Row 4: Controls full width -->
-        <article class="card full">
-          <header><h3>General Controls</h3></header>
-          <div class="controls">
-            <label class="switch">
-              <input id="buzzerToggle" type="checkbox" />
-              <span class="slider"></span>
-              <span class="lbl">Buzzer feedback</span>
-            </label>
-
-            <button id="btnReset" class="btn warn" title="Factory reset settings">Reset</button>
-            <button id="btnRestart" class="btn danger" title="Reboot device">Restart</button>
+        <!-- Controls -->
+        <section class="card full">
+          <header><h3>Controls</h3></header>
+          <div class="row">
+            <div class="switch">
+              <span class="lbl">Buzzer Feedback</span>
+              <input id="buzzerToggle" type="checkbox"/>
+              <span class="slider" aria-hidden="true"></span>
+            </div>
+            <div class="controls">
+              <button id="btnReset" class="btn warn">Factory Reset</button>
+              <button id="btnRestart" class="btn danger">Restart</button>
+            </div>
           </div>
           <div id="toast" class="toast" hidden>Saved</div>
-        </article>
-      </section>
-    </main>
+        </section>
+
+      </div>
+    </div>
   </div>
 
   <script src="js/home.mock.js"></script>
