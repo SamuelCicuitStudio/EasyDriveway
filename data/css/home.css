@@ -352,3 +352,53 @@ select, input[type="number"], input[type="text"]{
 
 
 .card header{flex:0 0 auto}
+
+
+/* === Additions (do not remove existing) === */
+/* Prevent SVG baseline clipping in hero */
+.hero-card svg{ display:block; }
+
+/* Hint text next to switches (e.g., ESP‑NOW Auto/Manual) */
+.switch .hint{ font-size:11px; color:var(--muted); line-height:1; }
+
+/* Layout tweak for the new ESP‑NOW Call Mode switch row */
+#espnowSwitch{ justify-content:space-between; }
+#espnowSwitch .lbl{ flex:1 1 auto; }
+#espnowSwitch .slider{ flex:0 0 auto; }
+#espnowSwitch .hint{ flex:0 0 auto; min-width:52px; text-align:right; }
+
+/* Consistent focus ring for accessibility */
+a:focus-visible, button:focus-visible, .btn:focus-visible,
+select:focus-visible, input[type="number"]:focus-visible, input[type="text"]:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+  box-shadow: 0 0 0 3px rgba(0,255,174,.15);
+}
+
+/* Optional: reduce motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important; scroll-behavior:auto !important; }
+}
+
+
+/* ===== System card spacing & layout tweaks (non-destructive) ===== */
+.card-system .system-body{ padding:4px 2px; }
+
+/* Give each block inside System a comfortable rhythm */
+.card-system .system-body .row{ align-items:center; gap:12px; }
+.card-system .system-body .row .kv{ padding:8px; }
+
+/* Stronger separation between Mode area, toggle, and Controls */
+.card-system .system-body .divider{ height:10px; }
+.card-system .system-body header{ margin:6px 0 8px; }
+
+/* Keep the buzzer switch on the left and action buttons packed to the right */
+.card-system .system-body .row .controls{ margin-left:auto; display:flex; gap:8px; }
+
+/* ESP‑NOW Mode switch: full-width block feel and clean spacing */
+#espnowSwitch{ width:100%; padding:8px 10px; }
+#espnowSwitch .lbl{ flex:1 1 auto; letter-spacing:.3px; }
+#espnowSwitch .hint{ margin-left:6px; min-width:56px; text-align:right; }
+
+/* Ensure header badge in System has a bit of breathing room */
+.card-system header .badge{ margin-left:6px; }

@@ -10,6 +10,10 @@
   const buzzerToggle = $('buzzerToggle');
   const btnReset = $('btnReset'), btnRestart = $('btnRestart');
 
+  // NEW: ESP-NOW Call Mode toggle
+  const espnowToggle = $('espnowToggle');
+  const espnowHint   = $('espnowHint');
+
   // Cooling
   const coolBadge = $('coolBadge'), tempVal = $('tempVal'), rtcTemp = $('rtcTemp');
   const coolMode  = $('coolMode'),  coolApplied = $('coolApplied');
@@ -21,13 +25,13 @@
   const sleepSchedule = $('sleepSchedule'), sleepReset = $('sleepReset');
   const sleepLeft = $('sleepLeft'), sleepArmed = $('sleepArmed'), sleepWake = $('sleepWake');
 
-  
   // Logout
   const logoutBtn = $('logoutBtn');
 
   // Toast
   const toast = $('toast');
   const toastMsg = (t)=>{ toast.textContent=t||'Saved'; toast.hidden=false; setTimeout(()=>toast.hidden=true,1600); };
+
   // ---- Audio feedback (WebAudio) ----
   let __audioCtx = null;
   function __ensureAudioCtx() {
@@ -49,7 +53,6 @@
       osc.start(); osc.stop(ctx.currentTime + dur);
     }catch(e){}
   }
-
 
   // Helpers
   const fmtUptime = (ms) => {
@@ -87,6 +90,12 @@
       const mode = j.mode || 'AUTO';
       setBadge(modeBadge, mode === 'MANUAL' ? 'warn' : 'ok');
       setText(modeVal, mode === 'MANUAL' ? 'Manual' : 'Auto', mode === 'MANUAL' ? 'warn' : 'ok');
+
+      // sync ESP-NOW toggle + hint
+      if (espnowToggle) {
+        espnowToggle.checked = (mode === 'MANUAL');
+        if (espnowHint) espnowHint.textContent = (mode === 'MANUAL') ? 'Manual' : 'Auto';
+      }
 
       const wifi = j.wifi || {};
       const wifiMode = wifi.mode || 'OFF';
@@ -179,6 +188,82 @@
     }catch(e){ toastMsg('Failed'); }
   });
 
+  // -------- ESP-NOW Call Mode toggle (AUTO/MANUAL) --------
+  (function initEspnowMode() {
+    if (!espnowToggle) return;
+
+    async function tryJSON(url, body, method='POST', timeoutMs=2500) {
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          method,
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+          cache:'no-store',
+          credentials:'same-origin'
+        });
+        return res.ok;
+      } finally { clearTimeout(t); }
+    }
+    async function tryQuery(url, params, method='POST', timeoutMs=2500) {
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      const qp = new URLSearchParams(params).toString();
+      try {
+        const res = await fetch(`${url}?${qp}`, {
+          method,
+          signal: ctrl.signal,
+          cache:'no-store',
+          credentials:'same-origin'
+        });
+        return res.ok;
+      } finally { clearTimeout(t); }
+    }
+
+    async function sendMode(manual) {
+      const mode = manual ? 'MANUAL' : 'AUTO';
+      const attempts = [
+        () => tryJSON('/api/system/mode', {mode}),             // canonical
+        () => tryQuery('/api/system/mode', {mode}),            // query
+        () => tryJSON('/api/espnow/mode', {mode}),             // alt path
+        () => tryQuery('/api/espnow/mode', {mode}),            // alt query
+        () => tryJSON('/api/system/mode', {manual}, 'POST'),   // boolean
+        () => tryQuery('/api/system/mode', {manual}),          // boolean query
+      ];
+      for (const fn of attempts) {
+        try { if (await fn()) return true; } catch(_) {}
+      }
+      return false;
+    }
+
+    function updateHint() {
+      if (espnowHint) espnowHint.textContent = espnowToggle.checked ? 'Manual' : 'Auto';
+    }
+
+    async function onToggle(next) {
+      // local feel
+      updateHint();
+      playBeep(900, 0.07, 'square', 0.08);
+      const ok = await sendMode(next);
+      if (ok) {
+        toastMsg('Mode set: ' + (next ? 'Manual' : 'Auto'));
+        playBeep(next ? 1200 : 700, 0.08, 'square', 0.08);
+        // reflect badge + value immediately
+        setBadge(modeBadge, next ? 'warn' : 'ok');
+        setText(modeVal, next ? 'Manual' : 'Auto', next ? 'warn' : 'ok');
+      } else {
+        // revert UI
+        espnowToggle.checked = !next;
+        updateHint();
+        toastMsg('Failed');
+      }
+    }
+
+    espnowToggle.addEventListener('change', () => onToggle(espnowToggle.checked));
+  })();
+
   // -------- Buzzer toggle --------
   (function initBuzzer() {
     if (!buzzerToggle) return;
@@ -232,9 +317,7 @@
         try {
           const ok = await tryFn();
           if (ok) return true;
-        } catch (e) {
-          /* keep trying */
-        }
+        } catch (e) { /* keep trying */ }
       }
       return false;
     }
@@ -247,25 +330,22 @@
     }
 
     async function handleToggle(next) {
-      // immediate local feedback so UI feels responsive
       clickBeepLocal();
       const ok = await sendBuzzer(next);
       if (ok) {
         toastMsg('Buzzer ' + (next ? 'enabled' : 'disabled'));
         clickBeepSuccess(next);
       } else {
-        // revert UI on failure
         buzzerToggle.checked = !next;
         toastMsg('Failed');
       }
     }
 
-    // Events: checkbox, plus the entire switch container (for CSS overlay cases)
     const container = buzzerToggle.closest('.switch');
     buzzerToggle.addEventListener('change', () => handleToggle(buzzerToggle.checked));
     if (container) {
       container.addEventListener('click', (ev) => {
-        if (ev.target === buzzerToggle) return; // native change will handle
+        if (ev.target === buzzerToggle) return;
         ev.preventDefault();
         const next = !buzzerToggle.checked;
         buzzerToggle.checked = next;
@@ -275,7 +355,6 @@
   })();
 
   // -------- Reset / Restart --------
-
   btnReset.addEventListener('click', async () => {
     if (!confirm('Factory reset settings?')) return;
     try{

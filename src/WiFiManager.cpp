@@ -186,6 +186,13 @@ void WiFiManager::registerRoutes() {
     _server.on(API_LOGOUT_ENDPOINT, HTTP_POST, [this](AsyncWebServerRequest* r){ hLogout(r); });
     _server.on(API_AUTH_STATUS,     HTTP_GET,  [this](AsyncWebServerRequest* r){ hLiveStatus(r); });
 
+    // System mode (AUTO/MANUAL)
+    _server.on(API_SYS_MODE,    HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSystemMode(r,d,l,i,t); });
+    // Optional alias kept for front-end attempts
+    _server.on(API_ESPNOW_MODE, HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSystemMode(r,d,l,i,t); });
+
     // ---------- Wi-Fi control ----------
     _server.on(API_WIFI_MODE,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hWiFiMode(r); });
     _server.on(API_WIFI_STA_CONNECT,    HTTP_POST, nullptr, nullptr,
@@ -766,7 +773,6 @@ bool WiFiManager::applyExportedConfig(const JsonVariantConst& cfgObj) {
 }
 
 // ---- WiFiManager.cpp — complete hSysStatus(.) ----
-// ---- WiFiManager.cpp — complete hSysStatus(.) ----
 void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
 
@@ -784,16 +790,26 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
 
   DynamicJsonDocument d(2048);
 
-  // ----- Mode (AUTO / MANUAL) as a simple string for home.js
-  const int md = _cfg ? _cfg->GetInt(ESPNOW_MD_KEY, ESPNOW_MD_DEFAULT) : ESPNOW_MD_DEFAULT;
-  d["mode"] = (md == 1) ? "MANUAL" : "AUTO";
+  // ------------------------------------------------------------------------
+  // System MODE (AUTO / MANUAL)
+  // Source of truth: NVS key ESPNOW_MD_KEY as int (0=AUTO, 1=MANUAL).
+  // The UI (home.js) reads a simple string "mode": "AUTO" | "MANUAL".
+  // We also mirror boolean "manual" and numeric "mode_code" for flexibility.
+  // ------------------------------------------------------------------------
+  const int mdCode = _cfg ? _cfg->GetInt(ESPNOW_MD_KEY, ESPNOW_MD_DEFAULT) : ESPNOW_MD_DEFAULT;
+  const bool isManual = (mdCode == 1);
+  d["mode"]      = isManual ? "MANUAL" : "AUTO";
+  d["manual"]    = isManual;
+  d["mode_code"] = mdCode;
 
-  // ----- Wi-Fi summary (mode/ip/ch/rssi)
+  // ------------------------------------------------------------------------
+  // Wi-Fi summary (AP / STA / OFF)
+  // ------------------------------------------------------------------------
   {
     JsonObject wifi = d.createNestedObject("wifi");
     if (_apOn) {
       wifi["mode"] = "AP";
-      wifi["ip"]   = _wifi ? _wifi->softAPIP().toString() : String();
+      wifi["ip"]   = (_wifi ? _wifi->softAPIP().toString() : String());
       wifi["ch"]   = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
     } else if (_wifi && _wifi->status() == WL_CONNECTED) {
       wifi["mode"] = "STA";
@@ -805,43 +821,53 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
     }
   }
 
-  // ----- Power + Health (basic values that the UI expects)
+  // ------------------------------------------------------------------------
+  // Power + Health (basic placeholders — adjust if you have real sensors)
+  // ------------------------------------------------------------------------
   {
     JsonObject power = d.createNestedObject("power");
-    power["source"] = "WALL";     // change to "BATTERY" if you can detect it
+    power["source"] = "WALL";   // or "BATTERY" if you detect it
     power["ok"]     = true;
     power["detail"] = "nominal";
 
     JsonObject health = d.createNestedObject("health");
-    health.createNestedArray("faults"); // empty → “No faults” in UI
+    health.createNestedArray("faults"); // empty => “No faults”
   }
 
-  // ----- Time: prefer RTC; fall back to system clock
+  // ------------------------------------------------------------------------
+  // Time: prefer RTC if available; otherwise system clock
+  // ------------------------------------------------------------------------
   {
     JsonObject t = d.createNestedObject("time");
     bool haveRTC = false;
 
     RTCManager* rtcMgr = (_esn ? _esn->rtc() : nullptr);
     if (rtcMgr && !rtcMgr->lostPower()) {
-      t["iso"] = isoFromRTC(rtcMgr);                       // "YYYY-MM-DDTHH:MM:SSZ"
+      t["iso"] = isoFromRTC(rtcMgr);               // "YYYY-MM-DDTHH:MM:SSZ"
       bool tok = false;
-      float trtc = rtcMgr->readTemperatureC(&tok);         // DS3231 die temperature
+      float trtc = rtcMgr->readTemperatureC(&tok); // DS3231 die temperature
       if (tok && isfinite(trtc)) t["tempC"] = trtc;
       haveRTC = true;
     }
     if (!haveRTC) {
-      t["iso"] = isoFromSystemClock();                     // system time formatted
+      t["iso"] = isoFromSystemClock();             // formatted system time
     }
   }
 
-  // ----- Uptime
+  // ------------------------------------------------------------------------
+  // Uptime
+  // ------------------------------------------------------------------------
   d["uptime_ms"] = (uint32_t)millis();
 
-  // ----- Buzzer toggle
+  // ------------------------------------------------------------------------
+  // Buzzer toggle (from NVS)
+  // ------------------------------------------------------------------------
   d["buzzer_enabled"] = _cfg ? _cfg->GetBool(BUZZER_FEEDBACK_KEY, BUZZER_FEEDBACK_DEFAULT)
                              : BUZZER_FEEDBACK_DEFAULT;
 
-  // ----- Cooling snapshot
+  // ------------------------------------------------------------------------
+  // Cooling snapshot
+  // ------------------------------------------------------------------------
   {
     JsonObject c = d.createNestedObject("cooling");
     if (_cool) {
@@ -856,11 +882,13 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
     }
   }
 
-  // ----- Sleep / inactivity
+  // ------------------------------------------------------------------------
+  // Sleep / inactivity (if present)
+  // ------------------------------------------------------------------------
   if (_slp) {
     JsonObject s = d.createNestedObject("sleep");
 
-    const long secsLeft = _slp->secondsUntilSleep();  // negative => due/armed
+    const long secsLeft = _slp->secondsUntilSleep(); // negative => due/armed
     uint32_t timeoutSec = 0;
     if (secsLeft >= 0) {
       const uint32_t now  = _slp->nowEpoch();
@@ -874,7 +902,7 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
     s["armed"]               = _slp->isArmed();
   }
 
-  // JSON + content-type via helper; no AsyncWebServerResponse::print used.
+  // Send JSON (helper ensures proper headers)
   sendJSON(req, d);
 }
 
@@ -1044,4 +1072,55 @@ void WiFiManager::hSleepSchedule(AsyncWebServerRequest* req, uint8_t* data, size
 
   if (!ok) { sendError(req, "Schedule failed", 500); return; }
   sendOK(req);
+}
+void WiFiManager::hSystemMode(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  static String body; if (index == 0) body.clear();
+  body += String((char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  // Parse either JSON body or query string (?mode=AUTO/MANUAL or ?manual=0/1)
+  String modeStr;      // "AUTO" or "MANUAL"
+  bool   hasManual = false;
+  bool   manualBool = false;
+
+  // 1) JSON
+  bool jsonParsed = false;
+  {
+    DynamicJsonDocument d(256);
+    if (!deserializeJson(d, body)) {
+      jsonParsed = true;
+      JsonVariantConst root = d.as<JsonVariantConst>();
+      if (!root.isNull()) {
+        if (root.containsKey(J_MODE))   modeStr = String(root[J_MODE].as<const char*>());
+        if (root.containsKey("manual")) { hasManual = true; manualBool = root["manual"].as<bool>(); }
+      }
+    }
+  }
+
+  // 2) Query fallback
+  if (!modeStr.length() && !hasManual) {
+    if (req->hasParam(J_MODE))   modeStr = req->getParam(J_MODE)->value();
+    if (req->hasParam("manual")) { hasManual = true; manualBool = (req->getParam("manual")->value() == "1" || req->getParam("manual")->value() == "true"); }
+  }
+
+  // Normalize
+  modeStr.toUpperCase();
+  if (!modeStr.length() && hasManual) modeStr = manualBool ? J_MANUAL : J_AUTO;
+
+  // Validate
+  if (modeStr != J_AUTO && modeStr != J_MANUAL) { sendError(req, "mode must be AUTO or MANUAL"); return; }
+
+  // Apply to ESP-NOW manager and persist to NVS
+  bool ok = false;
+  if (_esn) {
+    if (modeStr == J_AUTO)   ok = _esn->setSystemModeAuto(true);
+    else                     ok = _esn->setSystemModeManual(true);
+  }
+  // Also mirror to ConfigManager so /api/system/status can read it
+  if (_cfg) _cfg->PutString(ESPNOW_MD_KEY, modeStr.c_str());
+
+  DynamicJsonDocument res(128);
+  res[J_OK]   = ok;
+  res[J_MODE] = modeStr;
+  sendJSON(req, res);
 }

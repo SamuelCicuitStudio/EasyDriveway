@@ -21,6 +21,9 @@
 #define API_LOGIN_ENDPOINT  "/connect"          // POST {username,password} (also accepts user/login, pass)
 #define API_LOGOUT_ENDPOINT "/logout"           // POST clear cookie
 #define API_AUTH_STATUS     "/api/auth/status"  // GET -> {ok:true/false}
+// ---------------- System mode (AUTO/MANUAL) ----------------
+#define API_SYS_MODE   "/api/system/mode"   // POST {mode:"AUTO|MANUAL"} or {manual:true|false}
+#define API_ESPNOW_MODE "/api/espnow/mode"  // optional alias; same handler
 
 // ---------------- Config (JSON) ----------------
 #define API_CFG_LOAD          "/api/config/load"            // GET

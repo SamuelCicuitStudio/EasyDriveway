@@ -115,6 +115,8 @@ private:
     void hBuzzerSet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hSystemReset(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hSystemRestart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+    void hSystemMode(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+
 
     // Cooling handlers
     void hCoolStatus(AsyncWebServerRequest* req);
