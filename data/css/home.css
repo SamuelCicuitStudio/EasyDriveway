@@ -100,18 +100,26 @@ body{
   flex:1 1 auto;
   overflow:hidden;
   padding:10px;
+
+  height:100%;
 }
+
 
 /* 3-column grid */
 .grid{
   display:grid;
   grid-gap:var(--g);
+
+  height:100%;
 }
+
 .grid-3{
   grid-template-columns: 360px 540px 280px;
-  grid-template-rows: var(--row1-h) var(--row2-h);
-  align-content:start;
+  grid-template-rows: 1fr 1fr 1fr;
+  align-content: stretch;
+  height: 100%;
 }
+
 .card{
   background:linear-gradient(180deg,var(--pane),#12192a);
   border:1px solid var(--line); border-radius:12px; padding:8px 8px 6px;
@@ -277,13 +285,16 @@ select, input[type="number"], input[type="text"]{
 }
 
 
-/* === Home -> Topology-like layout positions === */
-.card-system  { grid-column:1; grid-row:1; }
-.card-power   { grid-column:1; grid-row:2; }
-.card-cooling { grid-column:2; grid-row:1; display:flex; flex-direction:column; }
-.card-sleep   { grid-column:2; grid-row:2; display:flex; flex-direction:column; }
-.card-faults  { grid-column:3; grid-row:1 / span 2; display:flex; flex-direction:column; }
-.card-time    { display:none; } /* merged into system/cooling layout or unused */
+
+/* === Home layout (3 rows, 3 columns) === */
+.card-system  { grid-column:1; grid-row:1; display:flex; flex-direction:column; }
+.card-power   { grid-column:1; grid-row:2; display:flex; flex-direction:column; }
+.card-time    { grid-column:1; grid-row:3; display:flex; flex-direction:column; }
+
+.card-cooling { grid-column:2; grid-row:1 / span 2; display:flex; flex-direction:column; min-height:0; }
+.card-sleep   { grid-column:2; grid-row:3; display:flex; flex-direction:column; min-height:0; }
+
+.card-faults  { grid-column:3; grid-row:1 / span 3; display:flex; flex-direction:column; min-height:0; }
 
 /* Faults list scroll */
 .card-faults .list{
@@ -339,3 +350,5 @@ select, input[type="number"], input[type="text"]{
 
 /* Faults keeps its scroll list as before */
 
+
+.card header{flex:0 0 auto}

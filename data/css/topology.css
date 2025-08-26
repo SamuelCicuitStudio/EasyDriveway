@@ -390,3 +390,31 @@ select, input[type="number"], input[type="text"]{ padding:6px 8px; border-radius
   display:flex; gap:8px; flex-wrap:wrap;
 }
 
+
+/* === Full-viewport background hard fix (prevents any white bleed) === */
+:root { color-scheme: dark; }
+
+html, body {
+  min-height: 100vh;
+  height: 100%;
+  margin: 0;
+  background-color: #0a0f17;
+  background-image: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: cover;
+}
+
+/* Pin a non-scrolling paint layer behind everything */
+body::before{
+  content:"";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
+}
+
+/* Ensure the main app container never paints white */
+#app, .frame, .wrap {
+  background-clip: padding-box;
+}
