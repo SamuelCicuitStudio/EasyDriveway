@@ -339,6 +339,10 @@ void ConfigManager::initializeVariables() {
     PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
     PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
     PutBool  (BUZZER_FEEDBACK_KEY,     BUZZER_FEEDBACK_DEFAULT);     // 1 (enabled)
+
+    PutString(WEB_USER_KEY, WEB_USER_DEFAULT);
+    PutString(WEB_PASS_KEY, WEB_PASS_DEFAULT);
+
 }
 
 /**

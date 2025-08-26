@@ -1,156 +1,72 @@
 @font-face {
-  font-family: 'Inter';
-  src: url('/fonts/Inter_18pt-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
+  font-family: "Inter";
+  src: url("/fonts/Inter_18pt-Regular.ttf") format("truetype");
+  font-weight: 400; font-style: normal; font-display: swap;
 }
-
 @font-face {
-  font-family: 'Inter';
-  src: url('/fonts/Inter_18pt-SemiBold.ttf') format('truetype');
-  font-weight: 600;
-  font-style: normal;
+  font-family: "Inter";
+  src: url("/fonts/Inter_18pt-SemiBold.ttf") format("truetype");
+  font-weight: 600; font-style: normal; font-display: swap;
 }
 
-* {
-  box-sizing: border-box;
+:root{
+  --bg0:#0b0f16; --bg1:#0e1320; --pane:#141a2b; --line:#1f2940;
+  --text:#e8eef7; --muted:#aab6c8; --accent:#00ffae; --danger:#ff5a6b;
 }
 
-body {
-  margin: 0;
-  padding: 0;
-  font-family: 'Inter', sans-serif;
-  background: linear-gradient(to bottom right, #0e0e0e, #1c1c1c);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background: radial-gradient(1200px 800px at 30% 20%, #0d1424, #0a0f17);
+  color:var(--text); font:14px/1.45 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
 }
 
-.login-container {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
-  padding: 40px 30px;
-  width: 320px;
-  box-shadow: 0 0 25px rgba(0, 0, 0, 0.6);
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  animation: fadeIn 0.8s ease-out forwards;
-  opacity: 0;
-  transform: translateY(30px);
-  transition: box-shadow 0.4s ease-in-out;
+.login-wrap{
+  min-height:100%; display:grid; place-items:center; padding:24px;
 }
 
-.login-container:hover {
-  box-shadow:
-    0 0 35px rgba(0, 255, 180, 0.4),
-    0 0 12px rgba(0, 255, 180, 0.2) inset;
+.card{
+  width:100%; max-width:380px; background:linear-gradient(180deg,var(--pane),#12192a);
+  border:1px solid var(--line); border-radius:16px; padding:20px 18px 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
 }
 
-@keyframes fadeIn {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.brand{ text-align:center; margin-bottom:14px }
+.logo{
+  width:54px; height:54px; margin:8px auto 10px; border-radius:14px;
+  display:grid; place-items:center; font-weight:800; letter-spacing:.5px;
+  color:#002318; background: linear-gradient(180deg,#00ffae,#15c895);
+  border:1px solid rgba(0,0,0,.25); text-shadow:0 1px 0 rgba(255,255,255,.35);
+}
+.title{ font-weight:700; font-size:16px }
+.subtitle{ font-size:12px; color:var(--muted) }
+
+.label{ display:block; margin:12px 0 6px; color:#d7e2f2 }
+.field{
+  display:flex; align-items:center; gap:6px; background:#0d1424;
+  border:1px solid #1f2940; border-radius:10px; padding:6px 8px;
+}
+.field input{
+  flex:1; background:transparent; border:none; outline:none;
+  color:var(--text); font-size:16px; padding:6px 4px;
+}
+.field input::placeholder{ color:#687694 }
+.toggle{
+  border:none; background:transparent; color:#99a8c2; cursor:pointer; font-size:16px;
 }
 
-.logo-circle {
-  width: 100px;
-  height: 100px;
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 2px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 30px;
-  box-shadow: 0 0 12px rgba(0, 255, 180, 0.25);
-}
+.row{ display:flex; align-items:center; justify-content:space-between; margin:10px 2px 2px }
+.checkbox{ color:#c6d1e4; font-size:13px; display:flex; align-items:center; gap:8px }
 
-.logo-circle img {
-  width: 60%;
-  height: 60%;
-  object-fit: contain;
-  filter: drop-shadow(0 0 4px rgba(0, 255, 180, 0.3));
+.cta{
+  width:100%; margin-top:12px; padding:10px 12px; border:none; border-radius:12px;
+  font-weight:700; letter-spacing:.2px; cursor:pointer; color:#002618;
+  background:linear-gradient(180deg,#00ffae,#20c896); box-shadow: 0 6px 20px rgba(0,255,174,.25);
 }
+.cta[disabled]{ opacity:.6; cursor:progress }
 
-/* Input group with icon and text perfectly aligned */
-.input-group {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  background-color: rgba(255, 255, 255, 0.02);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 20px;
-  padding: 0 12px;
-  height: 48px;
-  transition: box-shadow 0.3s ease-in-out;
+.error{
+  margin-top:10px; color:#ffd1d6; background:rgba(255,90,107,.08);
+  border:1px solid rgba(255,90,107,.35); border-radius:10px; padding:8px 10px; font-size:13px;
 }
-
-.input-group img {
-  width: 20px;
-  height: 20px;
-  margin-right: 10px;
-  filter: brightness(0.9);
-}
-
-.input-group input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 1em;
-  height: 100%;
-}
-
-.input-group input::placeholder {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.input-group input:focus {
-  outline: none;
-}
-
-.input-group:focus-within {
-  border-color: #00ffae;
-  box-shadow: 0 0 6px #00ffae;
-}
-
-/* Button styling */
-.login-container button {
-  width: 100%;
-  padding: 12px;
-  font-size: 1em;
-  background: #00ffae;
-  color: #000;
-  border: none;
-  border-radius: 12px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.3s;
-}
-
-.login-container button img {
-  width: 20px;
-  height: 20px;
-  margin-right: 10px;
-}
-
-.login-container button:hover {
-  background: #00e6a0;
-}
-
-.login-container .footer {
-  margin-top: 20px;
-  font-size: 0.85em;
-  color: rgba(255, 255, 255, 0.6);
-}
+.foot{ text-align:center; margin-top:12px; color:#99a8c2 }

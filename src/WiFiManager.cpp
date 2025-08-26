@@ -1,24 +1,32 @@
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
- *  File        : WiFiManager.cpp (fixed + full rewrite)
+ *  File        : WiFiManager.cpp
  **************************************************************/
 #include "WiFiManager.h"
 #include "WiFiAPI.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <FS.h>
 #include <SPIFFS.h>
-#include <ArduinoJson.h>
-
-// Use the macro path defined in Config.h:
-//   #define SLAVE_CONFIG_PATH "/config/SlaveConfig.json"
-// Do NOT redeclare a symbol with the same name here.
 
 WiFiManager* WiFiManager::instance = nullptr;
+static const char* COOKIE_NAME = "ICMSESS";
 
-// -----------------------------------------------------------
-// lifecycle
-// -----------------------------------------------------------
+static String isoFromRTC(RTCManager* rtc) {
+  if (!rtc) return String();
+  return rtc->iso8601String();  // "YYYY-MM-DDTHH:MM:SS" (UTC by design) 
+}
+
+static String isoFromSystemClock() {
+  time_t now = time(nullptr);
+  if (now <= 0) return String("unsynced");
+  struct tm tmv; gmtime_r(&now, &tmv);
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmv);
+  return String(buf);
+}
+/* ==================== bring-up ==================== */
 void WiFiManager::begin() {
     instance = this;
 
@@ -29,23 +37,15 @@ void WiFiManager::begin() {
     addCORS();
     registerRoutes();
 
-    // Decide STA vs AP
     const bool gotoCfg = _cfg ? _cfg->GetBool(GOTO_CONFIG_KEY, false) : false;
     bool staOk = false;
 
-    if (!gotoCfg) {
-        staOk = tryConnectSTAFromNVS();
-    }
-
-    if (!staOk) {
-        startAccessPoint();
-    }
+    if (!gotoCfg) staOk = tryConnectSTAFromNVS();
+    if (!staOk)   startAccessPoint();
 
     if (_log) {
         _log->event(
-            ICMLogFS::DOM_WIFI,
-            ICMLogFS::EV_INFO,
-            6001,
+            ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6001,
             _apOn ? "WiFiMgr: AP mode ready" : "WiFiMgr: STA connected",
             _apOn ? "AP" : "STA"
         );
@@ -57,7 +57,6 @@ void WiFiManager::disableWiFiAP() {
         _wifi->softAPdisconnect(true);
         _wifi->mode(WIFI_OFF);
         _apOn = false;
-        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6002, "AP disabled", "WiFiMgr");
     }
 }
 
@@ -66,34 +65,26 @@ void WiFiManager::setAPCredentials(const char* ssid, const char* password) {
         _cfg->PutString(DEVICE_WIFI_HOTSPOT_NAME_KEY, ssid);
         _cfg->PutString(DEVICE_AP_AUTH_PASS_KEY,      password);
     }
-    if (_log) _log->eventf(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6003, "AP creds updated ssid=%s", ssid);
 }
 
+/* = SPIFFS ⇄ config import (legacy JSON) = */
 void WiFiManager::syncSpifToPrefs() {
     if (!SPIFFS.exists(SLAVE_CONFIG_PATH)) return;
     File f = SPIFFS.open(SLAVE_CONFIG_PATH, FILE_READ);
     if (!f) return;
 
     DynamicJsonDocument d(32768);
-    DeserializationError err = deserializeJson(d, f);
+    if (deserializeJson(d, f)) { f.close(); return; }
     f.close();
-    if (err) return;
 
     JsonVariantConst root = d.as<JsonVariantConst>();
-    if (!root.isNull() && root.containsKey(J_CONFIG)) {
-        JsonVariantConst cfgObj = root[J_CONFIG];
-        applyExportedConfig(cfgObj);
-    }
-    if (!root.isNull() && root.containsKey(J_LINKS)) {
-        _esn->configureTopology(root[J_LINKS]);
-    }
+    if (!root.isNull() && root.containsKey(J_CONFIG)) applyExportedConfig(root[J_CONFIG]);
+    if (!root.isNull() && root.containsKey(J_LINKS))  if (_esn) _esn->configureTopology(root[J_LINKS]);
 }
 
-// -----------------------------------------------------------
-// net bring-up & ESPNOW alignment (uses ConfigManager keys)
-// -----------------------------------------------------------
+/* ==================== Wi-Fi bring-up ==================== */
 bool WiFiManager::tryConnectSTAFromNVS(uint32_t timeoutMs) {
-    // 1) Try ConfigManager-provided STA creds first
+    // Prefer STA creds from ConfigManager
     const String ssid = _cfg ? _cfg->GetString(WIFI_STA_SSID_KEY, "") : "";
     const String psk  = _cfg ? _cfg->GetString(WIFI_STA_PASS_KEY,  "") : "";
 
@@ -104,32 +95,20 @@ bool WiFiManager::tryConnectSTAFromNVS(uint32_t timeoutMs) {
     delay(50);
 
     if (ssid.length()) {
-        // Prefer your own NVS (ConfigManager) credentials
-        // Avoid writing them into WiFi's internal NVS (keep your source of truth in _cfg)
         _wifi->persistent(false);
         if (psk.length()) _wifi->begin(ssid.c_str(), psk.c_str());
         else              _wifi->begin(ssid.c_str());
     } else {
-        // Fallback: use WiFi's internal NVS (if you previously called WiFi.begin(ssid,pass))
         _wifi->persistent(true);
-        _wifi->begin();  // no args => use WiFi NVS
+        _wifi->begin(); // use WiFi NVS
     }
 
-    // Wait for connect
     const uint32_t start = millis();
-    while (_wifi->status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
-        delay(100);
-    }
-    if (_wifi->status() != WL_CONNECTED) {
-        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_WARN, 6010,
-                              "STA connect failed; will use AP", "WiFiMgr");
-        return false;
-    }
+    while (_wifi->status() != WL_CONNECTED && (millis() - start) < timeoutMs) delay(100);
 
-    if (_log) {
-        _log->eventf(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6011,
-                     "STA connected ip=%s rssi=%d ch=%d",
-                     _wifi->localIP().toString().c_str(), _wifi->RSSI(), _wifi->channel());
+    if (_wifi->status() != WL_CONNECTED) {
+        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_WARN, 6010, "STA connect failed; will use AP", "WiFiMgr");
+        return false;
     }
 
     alignESPNOWToCurrentChannel();
@@ -137,47 +116,30 @@ bool WiFiManager::tryConnectSTAFromNVS(uint32_t timeoutMs) {
 }
 
 void WiFiManager::startAccessPoint() {
-    // AP creds from ConfigManager (your NVS keys in Config.h)
     String apSsid = _cfg ? _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT)
                          : String(DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
     String apPass = _cfg ? _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT)
                          : String(DEVICE_AP_AUTH_PASS_DEFAULT);
-
     int ch = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
     if (ch < 1 || ch > 13) ch = ESPNOW_CH_DEFAULT;
 
     _wifi->mode(WIFI_AP);
-    if (!_wifi->softAPConfig(LOCAL_IP, GATEWAY, SUBNET)) {
-        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_ERROR, 6020, "softAPConfig failed", "WiFiMgr");
-        return;
-    }
-    if (!_wifi->softAP(apSsid.c_str(), apPass.c_str(), ch)) {
-        if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_ERROR, 6021, "softAP start failed", "WiFiMgr");
-        return;
-    }
+    if (!_wifi->softAPConfig(LOCAL_IP, GATEWAY, SUBNET)) return;
+    if (!_wifi->softAP(apSsid.c_str(), apPass.c_str(), ch)) return;
     _apOn = true;
 
-    // Align ESP-NOW to AP channel and persist it via your ConfigManager key
     if (_esn) _esn->setChannel((uint8_t)ch);
     if (_cfg) _cfg->PutInt(ESPNOW_CH_KEY, ch);
-
-    if (_log) {
-        _log->eventf(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6022,
-                     "AP up %s pass=%s ip=%s ch=%d",
-                     apSsid.c_str(), apPass.c_str(), _wifi->softAPIP().toString().c_str(), ch);
-    }
 }
 
 void WiFiManager::alignESPNOWToCurrentChannel() {
-    // When in STA, bind ESP-NOW to the router’s channel; persist it in your own key
     uint8_t ch = _wifi->channel();
     if (ch < 1 || ch > 13) ch = ESPNOW_CH_DEFAULT;
     if (_esn) _esn->setChannel(ch);
     if (_cfg) _cfg->PutInt(ESPNOW_CH_KEY, (int)ch);
 }
-// -----------------------------------------------------------
-// routing
-// -----------------------------------------------------------
+
+/* ==================== routing ==================== */
 void WiFiManager::addCORS() {
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin",  "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -185,91 +147,133 @@ void WiFiManager::addCORS() {
 }
 
 void WiFiManager::registerRoutes() {
-    // static html/ui
-    _server.on(API_ROOT,           HTTP_GET, [this](AsyncWebServerRequest* r){ handleRoot(r); });
-    _server.on(API_SETTINGS_HTML,  HTTP_GET, [this](AsyncWebServerRequest* r){ handleSettings(r); });
-    _server.on(API_WIFI_PAGE_HTML, HTTP_GET, [this](AsyncWebServerRequest* r){ handleWiFiPage(r); });
-    _server.on(API_THANKYOU_HTML,  HTTP_GET, [this](AsyncWebServerRequest* r){ handleThanks(r); });
+    // ---------- HTML pages ----------
+    _server.on(API_ROOT,      HTTP_GET, [this](AsyncWebServerRequest* r){ handleRoot(r); });
+    _server.on(PAGE_HOME,     HTTP_GET, [this](AsyncWebServerRequest* r){ handleHome(r); });
+    _server.on(PAGE_SETTINGS, HTTP_GET, [this](AsyncWebServerRequest* r){ handleSettings(r); });
+    _server.on(PAGE_WIFI,     HTTP_GET, [this](AsyncWebServerRequest* r){ handleWiFiPage(r); });
+    _server.on(PAGE_TOPO,     HTTP_GET, [this](AsyncWebServerRequest* r){ handleTopology(r); });
+    _server.on(PAGE_LIVE,     HTTP_GET, [this](AsyncWebServerRequest* r){ handleLive(r); });
+    _server.on(PAGE_THANKYOU, HTTP_GET, [this](AsyncWebServerRequest* r){ handleThanks(r); });
+    // Home/status + controls
+    _server.on(API_SYS_STATUS,  HTTP_GET,  [this](AsyncWebServerRequest* r){ hSysStatus(r); });
+    _server.on(API_BUZZ_SET,    HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hBuzzerSet(r,d,l,i,t); });
+    _server.on(API_SYS_RESET,   HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSystemReset(r,d,l,i,t); });
+    _server.on(API_SYS_RESTART, HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSystemRestart(r,d,l,i,t); });
 
-    // Wi-Fi control
-    _server.on(API_WIFI_MODE,          HTTP_GET, [this](AsyncWebServerRequest* r){ hWiFiMode(r); });
-    _server.on(API_WIFI_STA_CONNECT,   HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiStaConnect(r,d,l,i,t); });
-    _server.on(API_WIFI_STA_DISCONNECT,HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiStaDisconnect(r,d,l,i,t); });
-    _server.on(API_WIFI_AP_START,      HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiApStart(r,d,l,i,t); });
-    _server.on(API_WIFI_SCAN,          HTTP_GET, [this](AsyncWebServerRequest* r){ hWiFiScan(r); });
+    // Cooling
+    _server.on(API_COOL_STATUS, HTTP_GET, [this](AsyncWebServerRequest* r){ hCoolStatus(r); });
+    _server.on(API_COOL_MODE,   HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCoolMode(r,d,l,i,t); });
+    _server.on(API_COOL_SPEED,  HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCoolSpeed(r,d,l,i,t); });
 
-    // config, export/import
-    _server.on(API_CFG_LOAD,           HTTP_GET, [this](AsyncWebServerRequest* r){ hCfgLoad(r); });
+    // Sleep
+    _server.on(API_SLEEP_STATUS,  HTTP_GET,  [this](AsyncWebServerRequest* r){ hSleepStatus(r); });
+    _server.on(API_SLEEP_TIMEOUT, HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSleepTimeout(r,d,l,i,t); });
+    _server.on(API_SLEEP_RESET,   HTTP_POST, [this](AsyncWebServerRequest* r){ hSleepReset(r); });
+    _server.on(API_SLEEP_SCHED,   HTTP_POST, nullptr, nullptr,
+    [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSleepSchedule(r,d,l,i,t); });
+
+    // ---------- Auth ----------
+    _server.on(API_LOGIN_ENDPOINT,  HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hLogin(r,d,l,i,t); });
+    _server.on(API_LOGOUT_ENDPOINT, HTTP_POST, [this](AsyncWebServerRequest* r){ hLogout(r); });
+    _server.on(API_AUTH_STATUS,     HTTP_GET,  [this](AsyncWebServerRequest* r){ hLiveStatus(r); });
+
+    // ---------- Wi-Fi control ----------
+    _server.on(API_WIFI_MODE,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hWiFiMode(r); });
+    _server.on(API_WIFI_STA_CONNECT,    HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiStaConnect(r,d,l,i,t); });
+    _server.on(API_WIFI_STA_DISCONNECT, HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiStaDisconnect(r,d,l,i,t); });
+    _server.on(API_WIFI_AP_START,       HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiApStart(r,d,l,i,t); });
+    _server.on(API_WIFI_SCAN,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hWiFiScan(r); });
+
+    // ---------- Config ----------
+    _server.on(API_CFG_LOAD,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hCfgLoad(r); });
     _server.on(API_CFG_SAVE,           HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgSave(r,d,l,i,t); });
-    _server.on(API_CFG_EXPORT,         HTTP_GET, [this](AsyncWebServerRequest* r){ hCfgExport(r); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgSave(r,d,l,i,t); });
+    _server.on(API_CFG_EXPORT,         HTTP_GET,  [this](AsyncWebServerRequest* r){ hCfgExport(r); });
     _server.on(API_CFG_IMPORT,         HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgImport(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgImport(r,d,l,i,t); });
     _server.on(API_CFG_FACTORY_RESET,  HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgFactoryReset(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgFactoryReset(r,d,l,i,t); });
 
-    // peers
-    _server.on(API_PEERS_LIST,         HTTP_GET, [this](AsyncWebServerRequest* r){ hPeersList(r); });
+    // ---------- Peers / Topology ----------
+    _server.on(API_PEERS_LIST,         HTTP_GET,  [this](AsyncWebServerRequest* r){ hPeersList(r); });
     _server.on(API_PEER_PAIR,          HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPeerPair(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPeerPair(r,d,l,i,t); });
     _server.on(API_PEER_REMOVE,        HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPeerRemove(r,d,l,i,t); });
-
-    // topology
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPeerRemove(r,d,l,i,t); });
     _server.on(API_TOPOLOGY_SET,       HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hTopoSet(r,d,l,i,t); });
-    _server.on(API_TOPOLOGY_GET,       HTTP_GET, [this](AsyncWebServerRequest* r){ hTopoGet(r); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hTopoSet(r,d,l,i,t); });
+    _server.on(API_TOPOLOGY_GET,       HTTP_GET,  [this](AsyncWebServerRequest* r){ hTopoGet(r); });
 
-    // sequence
+    // ---------- Sequences ----------
     _server.on(API_SEQUENCE_START,     HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSeqStart(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSeqStart(r,d,l,i,t); });
     _server.on(API_SEQUENCE_STOP,      HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSeqStop(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSeqStop(r,d,l,i,t); });
 
-    // power
-    _server.on(API_POWER_INFO,         HTTP_GET, [this](AsyncWebServerRequest* r){ hPowerInfo(r); });
+    // ---------- Power ----------
+    _server.on(API_POWER_INFO,         HTTP_GET,  [this](AsyncWebServerRequest* r){ hPowerInfo(r); });
     _server.on(API_POWER_CMD,          HTTP_POST, nullptr, nullptr,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPowerCmd(r,d,l,i,t); });
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPowerCmd(r,d,l,i,t); });
 
-    // uploads and assets
+    // ---------- Uploads & assets ----------
     _server.on(API_FILE_UPLOAD, HTTP_POST,
         [this](AsyncWebServerRequest* req){ req->send(200, "text/plain", "File received"); }, handleFileUpload);
-
     _server.on(API_FAVICON, HTTP_GET, [this](AsyncWebServerRequest* req){ req->send(204); });
 
+    // Static passthrough (images/fonts/css/js)
     _server.serveStatic(API_STATIC_ICONS, SPIFFS, "/icons/").setCacheControl("max-age=86400");
-    _server.serveStatic(API_STATIC_FONTS, SPIFFS, "/icons/").setCacheControl("max-age=86400");
+    _server.serveStatic(API_STATIC_FONTS, SPIFFS, "/fonts/").setCacheControl("max-age=86400");
     _server.serveStatic("/",              SPIFFS, "/");
 
     _server.begin();
 }
-
-// -----------------------------------------------------------
-// HTML pages (fallback minimal text if files missing)
-// -----------------------------------------------------------
+/* ==================== HTML handlers ==================== */
 void WiFiManager::handleRoot(AsyncWebServerRequest* request) {
-    if (SPIFFS.exists("/index.html")) { request->send(SPIFFS, "/index.html", String()); return; }
-    request->send(200, "text/plain", "ICM — WiFi Manager OK");
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    request->redirect(PAGE_HOME);
 }
-void WiFiManager::handleThanks(AsyncWebServerRequest* request) {
-    if (SPIFFS.exists("/thankyou.html")) { request->send(SPIFFS, "/thankyou.html", String()); return; }
-    request->send(200, "text/plain", "Thanks");
+void WiFiManager::handleHome(AsyncWebServerRequest* request) {
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    if (SPIFFS.exists(PAGE_HOME)) request->send(SPIFFS, PAGE_HOME, String());
+    else request->send(200, "text/plain", "ICM — Home");
 }
 void WiFiManager::handleSettings(AsyncWebServerRequest* request) {
-    if (SPIFFS.exists("/settings.html")) { request->send(SPIFFS, "/settings.html", String()); return; }
-    request->send(200, "text/plain", "Settings page");
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    if (SPIFFS.exists(PAGE_SETTINGS)) request->send(SPIFFS, PAGE_SETTINGS, String());
+    else request->send(200, "text/plain", "Settings");
 }
 void WiFiManager::handleWiFiPage(AsyncWebServerRequest* request) {
-    if (SPIFFS.exists("/wifi.html")) { request->send(SPIFFS, "/wifi.html", String()); return; }
-    request->send(200, "text/plain", "Wi-Fi credentials page");
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    if (SPIFFS.exists(PAGE_WIFI)) request->send(SPIFFS, PAGE_WIFI, String());
+    else request->send(200, "text/plain", "Wi-Fi Credentials");
+}
+void WiFiManager::handleTopology(AsyncWebServerRequest* request) {
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    if (SPIFFS.exists(PAGE_TOPO)) request->send(SPIFFS, PAGE_TOPO, String());
+    else request->send(200, "text/plain", "Topology");
+}
+void WiFiManager::handleLive(AsyncWebServerRequest* request) {
+    if (!isAuthed(request)) { request->redirect(PAGE_LOGIN); return; }
+    if (SPIFFS.exists(PAGE_LIVE)) request->send(SPIFFS, PAGE_LIVE, String());
+    else request->send(200, "text/plain", "Live Session");
+}
+void WiFiManager::handleThanks(AsyncWebServerRequest* request) {
+    if (SPIFFS.exists(PAGE_THANKYOU)) request->send(SPIFFS, PAGE_THANKYOU, String());
+    else request->send(200, "text/plain", "Thanks");
 }
 
-// -----------------------------------------------------------
-// Config
-// -----------------------------------------------------------
+/* ==================== Config ==================== */
 void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(1024);
     d[J_AP_SSID] = _cfg ? _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT)
@@ -287,6 +291,7 @@ void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
         net[J_MODE] = "STA";
         net["ip"]   = _wifi->localIP().toString();
         net["ch"]   = _wifi->channel();
+        net["rssi"] = _wifi->RSSI();
     } else {
         net[J_MODE] = "OFF";
     }
@@ -312,11 +317,11 @@ void WiFiManager::hCfgSave(AsyncWebServerRequest* req, uint8_t* data, size_t len
         int ch = root[J_ESN_CH].as<int>();
         if (ch >= 1 && ch <= 13) {
             _cfg->PutInt(ESPNOW_CH_KEY, ch);
-            if (_apOn && _esn) _esn->setChannel((uint8_t)ch); // live apply in AP
+            if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
         }
     }
 
-    // Optional STA credentials — connect & persist via WiFi NVS
+    // optional STA creds to connect now
     if (!root.isNull() && root.containsKey(J_WIFI_SSID) && root.containsKey(J_WIFI_PSK)) {
         String ssid = root[J_WIFI_SSID].as<String>();
         String psk  = root[J_WIFI_PSK].as<String>();
@@ -334,13 +339,12 @@ void WiFiManager::hCfgSave(AsyncWebServerRequest* req, uint8_t* data, size_t len
         }
     }
 
-    if (_log) _log->event(ICMLogFS::DOM_WIFI, ICMLogFS::EV_INFO, 6100, "Saved config", "WiFiMgr");
     sendOK(req);
 }
 
 void WiFiManager::hCfgExport(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(65536);
-    String blob = _esn->exportConfiguration(); // peers + topology + ch/mode (by your ESPNowManager)
+    String blob = _esn ? _esn->exportConfiguration() : "{}";
     d[J_EXPORT] = blob;
     sendJSON(req, d);
 }
@@ -364,16 +368,12 @@ void WiFiManager::hCfgImport(AsyncWebServerRequest* req, uint8_t* data, size_t l
 
 void WiFiManager::hCfgFactoryReset(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
     (void)data; (void)len; (void)index; (void)total;
-    _esn->removeAllPeers();
-    _esn->clearAll();
-    _cfg->PutBool(RESET_FLAG_KEY, true);
-    if (_log) _log->event(ICMLogFS::DOM_SYSTEM, ICMLogFS::EV_WARN, 6110, "Factory reset requested", "WiFiMgr");
+    if (_esn) { _esn->removeAllPeers(); _esn->clearAll(); }
+    if (_cfg) _cfg->PutBool(RESET_FLAG_KEY, true);
     sendOK(req);
 }
 
-// -----------------------------------------------------------
-// Wi-Fi control
-// -----------------------------------------------------------
+/* ==================== Wi-Fi control ==================== */
 void WiFiManager::hWiFiMode(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(256);
     if (_apOn) {
@@ -399,11 +399,7 @@ void WiFiManager::hWiFiStaConnect(AsyncWebServerRequest* req, uint8_t* data, siz
     DynamicJsonDocument d(512);
     if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
     JsonVariantConst root = d.as<JsonVariantConst>();
-
-    if (root.isNull() || !root.containsKey(J_WIFI_SSID) || !root.containsKey(J_WIFI_PSK)) {
-        sendError(req, "Missing ssid/password");
-        return;
-    }
+    if (root.isNull() || !root.containsKey(J_WIFI_SSID) || !root.containsKey(J_WIFI_PSK)) { sendError(req, "Missing ssid/password"); return; }
 
     String ssid = root[J_WIFI_SSID].as<String>();
     String psk  = root[J_WIFI_PSK].as<String>();
@@ -444,12 +440,10 @@ void WiFiManager::hWiFiApStart(AsyncWebServerRequest* req, uint8_t* data, size_t
     if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
     JsonVariantConst root = d.as<JsonVariantConst>();
 
-    String apSsid = root.containsKey(J_AP_SSID)
-                    ? root[J_AP_SSID].as<String>()
-                    : _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
-    String apPass = root.containsKey(J_AP_PSK)
-                    ? root[J_AP_PSK].as<String>()
-                    : _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY, DEVICE_AP_AUTH_PASS_DEFAULT);
+    String apSsid = root.containsKey(J_AP_SSID) ? root[J_AP_SSID].as<String>()
+                                                : _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
+    String apPass = root.containsKey(J_AP_PSK)  ? root[J_AP_PSK].as<String>()
+                                                : _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT);
 
     if (root.containsKey(J_AP_SSID)) _cfg->PutString(DEVICE_WIFI_HOTSPOT_NAME_KEY, apSsid.c_str());
     if (root.containsKey(J_AP_PSK))  _cfg->PutString(DEVICE_AP_AUTH_PASS_KEY,      apPass.c_str());
@@ -459,7 +453,6 @@ void WiFiManager::hWiFiApStart(AsyncWebServerRequest* req, uint8_t* data, size_t
         if (ch >= 1 && ch <= 13) _cfg->PutInt(ESPNOW_CH_KEY, ch);
     }
 
-    // restart AP
     disableWiFiAP();
     startAccessPoint();
     sendOK(req);
@@ -480,14 +473,12 @@ void WiFiManager::hWiFiScan(AsyncWebServerRequest* req) {
     sendJSON(req, d);
 }
 
-// -----------------------------------------------------------
-// Peers
-// -----------------------------------------------------------
+/* ==================== Peers / Topology ==================== */
 void WiFiManager::hPeersList(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(8192);
-    String peers = _esn->serializePeers();
-    if (!deserializeJson(d, peers)) { sendJSON(req, d); }
-    else { sendError(req, "Peers serialization error", 500); }
+    String peers = _esn ? _esn->serializePeers() : "{}";
+    if (!deserializeJson(d, peers)) sendJSON(req, d);
+    else sendError(req, "Peers serialization error", 500);
 }
 
 void WiFiManager::hPeerPair(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
@@ -501,7 +492,7 @@ void WiFiManager::hPeerPair(AsyncWebServerRequest* req, uint8_t* data, size_t le
 
     String mac  = root.containsKey(J_MAC)  ? root[J_MAC].as<String>()  : String();
     String type = root.containsKey(J_TYPE) ? root[J_TYPE].as<String>() : String();
-    bool ok = _esn->pair(mac, type);
+    bool ok = _esn ? _esn->pair(mac, type) : false;
     if (ok) sendOK(req); else sendError(req, "Pair failed", 500);
 }
 
@@ -515,13 +506,10 @@ void WiFiManager::hPeerRemove(AsyncWebServerRequest* req, uint8_t* data, size_t 
     JsonVariantConst root = d.as<JsonVariantConst>();
 
     String mac = root.containsKey(J_MAC) ? root[J_MAC].as<String>() : String();
-    bool ok = _esn->removePeer(mac);
+    bool ok = _esn ? _esn->removePeer(mac) : false;
     if (ok) sendOK(req); else sendError(req, "Remove failed", 500);
 }
 
-// -----------------------------------------------------------
-// Topology
-// -----------------------------------------------------------
 void WiFiManager::hTopoSet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
     static String body; if (index == 0) body.clear();
     body += String((char*)data).substring(0, len);
@@ -532,13 +520,8 @@ void WiFiManager::hTopoSet(AsyncWebServerRequest* req, uint8_t* data, size_t len
     JsonVariantConst root = d.as<JsonVariantConst>();
 
     if (!root.isNull() && root.containsKey(J_LINKS)) {
-        bool ok = _esn->configureTopology(root[J_LINKS]);
-        if (ok) {
-            if (_log) _log->event(ICMLogFS::DOM_SYSTEM, ICMLogFS::EV_INFO, 6200, "Topology set", "WiFiMgr");
-            sendOK(req);
-        } else {
-            sendError(req, "Topology set failed", 500);
-        }
+        bool ok = _esn ? _esn->configureTopology(root[J_LINKS]) : false;
+        if (ok) sendOK(req); else sendError(req, "Topology set failed", 500);
         return;
     }
     sendError(req, "Missing links[]");
@@ -546,83 +529,152 @@ void WiFiManager::hTopoSet(AsyncWebServerRequest* req, uint8_t* data, size_t len
 
 void WiFiManager::hTopoGet(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(65536);
-    String topo = _esn->serializeTopology();
-    if (!deserializeJson(d, topo)) { sendJSON(req, d); }
-    else { sendError(req, "Topology serialization error", 500); }
+    String topo = _esn ? _esn->serializeTopology() : "{\"links\":[]}";
+    if (!deserializeJson(d, topo)) sendJSON(req, d);
+    else sendError(req, "Topology serialization error", 500);
 }
 
-// -----------------------------------------------------------
-// Auto sequence (stubs; hook into your sequence engine as needed)
-// -----------------------------------------------------------
+/* ==================== Sequences (stubs) ==================== */
 void WiFiManager::hSeqStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-    static String body; if (index == 0) body.clear();
-    body += String((char*)data).substring(0, len);
-    if (index + len < total) return;
-    // TODO: forward to sequence controller
+    (void)data;(void)len;(void)index;(void)total;
     sendOK(req);
 }
 void WiFiManager::hSeqStop(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
     (void)data;(void)len;(void)index;(void)total;
-    // TODO: forward to sequence controller
     sendOK(req);
 }
 
-// -----------------------------------------------------------
-// Power (passthrough)
-// -----------------------------------------------------------
+/* ==================== Power (stubs) ==================== */
 void WiFiManager::hPowerInfo(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(256);
-    // TODO: hook to your power monitor
-    d["status"] = "ok";
+    DynamicJsonDocument d(256); d["status"] = "ok"; sendJSON(req, d);
+}
+void WiFiManager::hPowerCmd(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+    (void)data;(void)len;(void)index;(void)total; sendOK(req);
+}
+
+/* ==================== Live/status ==================== */
+void WiFiManager::hLiveStatus(AsyncWebServerRequest* req) {
+    DynamicJsonDocument d(64);
+    d[J_OK] = isAuthed(req);
     sendJSON(req, d);
 }
 
-void WiFiManager::hPowerCmd(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-    (void)data;(void)len;(void)index;(void)total;
-    // TODO: forward to power controller
-    sendOK(req);
-}
+/* ==================== Auth ==================== */
+// ---- Login: JSON or FORM; server-side redirects for normal forms
+// FORM or JSON → server decides redirect targets (no client redirects)
+void WiFiManager::hLogin(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+    static String body; if (index == 0) body.clear();
+    body += String((const char*)data).substring(0, len);
+    if (index + len < total) return;
 
-// -----------------------------------------------------------
-// helpers
-// -----------------------------------------------------------
-void WiFiManager::sendJSON(AsyncWebServerRequest* req, const JsonDocument& doc, int code) {
-    String s; serializeJson(doc, s);
-    req->send(code, "application/json", s);
-}
-void WiFiManager::sendError(AsyncWebServerRequest* req, const char* msg, int code) {
-    DynamicJsonDocument d(128); d[J_ERR] = msg; sendJSON(req, d, code);
-}
-void WiFiManager::sendOK(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(64); d[J_OK] = true; sendJSON(req, d, 200);
-}
-
-void WiFiManager::attachTopologyLinks(DynamicJsonDocument& dst) {
-    String topo = _esn->serializeTopology();
-    DynamicJsonDocument t(65536);
-    if (!deserializeJson(t, topo)) {
-        dst[J_LINKS] = t[J_LINKS];
+    // Parse JSON
+    String username, password; bool parsed = false;
+    DynamicJsonDocument d(1024);
+    if (!deserializeJson(d, body)) {
+        JsonVariantConst root = d.as<JsonVariantConst>();
+        auto pick = [&](const char* a, const char* b, const char* c)->String{
+            if (!root.isNull() && root.containsKey(a)) return root[a].as<String>();
+            if (!root.isNull() && b && root.containsKey(b)) return root[b].as<String>();
+            if (!root.isNull() && c && root.containsKey(c)) return root[c].as<String>();
+            return String();
+        };
+        username = pick("username","user","login");
+        password = pick("password","pass",nullptr);
+        parsed   = username.length() || password.length();
     }
-}
 
-bool WiFiManager::applyExportedConfig(const JsonVariantConst& cfgObj) {
-    bool ok = true;
-    if (!cfgObj.isNull() && cfgObj.containsKey(J_LINKS)) {
-        ok &= _esn->configureTopology(cfgObj[J_LINKS]);
+    // Fallback: x-www-form-urlencoded
+    if (!parsed) {
+        auto getParam = [&](const String& key)->String{
+            String needle = key + "=";
+            int s = body.indexOf(needle); if (s < 0) return String();
+            s += needle.length();
+            int e = body.indexOf('&', s);
+            String v = e >= 0 ? body.substring(s, e) : body.substring(s);
+            v.replace('+',' ');
+            String out; out.reserve(v.length());
+            for (size_t i=0;i<v.length();++i){
+                if (v[i]=='%' && i+2<v.length()){ char h[3]={v[i+1],v[i+2],0}; out += (char)strtol(h,nullptr,16); i+=2; }
+                else out += v[i];
+            }
+            return out;
+        };
+        username = getParam("username"); if (!username.length()) username = getParam("user"); if (!username.length()) username = getParam("login");
+        password = getParam("password"); if (!password.length()) password = getParam("pass");
     }
-    if (!cfgObj.isNull() && cfgObj.containsKey(J_ESN_CH)) {
-        int ch = cfgObj[J_ESN_CH].as<int>();
-        if (ch >= 1 && ch <= 13) {
-            _cfg->PutInt(ESPNOW_CH_KEY, ch);
-            if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
+
+    const String expUser = _cfg ? _cfg->GetString(WEB_USER_KEY, WEB_USER_DEFAULT) : String(WEB_USER_DEFAULT);
+    const String expPass = _cfg ? _cfg->GetString(WEB_PASS_KEY, WEB_PASS_DEFAULT) : String(WEB_PASS_DEFAULT);
+    const bool ok = (username == expUser) && (password == expPass);
+
+    const bool wantsJson =
+        (req->hasHeader("Accept") && req->header("Accept").indexOf("application/json") >= 0) ||
+        (req->hasHeader("X-Requested-With") && req->header("X-Requested-With").indexOf("XMLHttpRequest") >= 0) ||
+        (req->hasHeader("Content-Type") && req->header("Content-Type").indexOf("application/json") >= 0);
+
+    if (!ok) {
+        if (wantsJson) {
+            DynamicJsonDocument res(64); res[J_OK] = false;
+            String s; serializeJson(res, s);
+            auto r = req->beginResponse(401, "application/json", s);
+            req->send(r);
+        } else {
+            auto r = req->beginResponse(302, "text/plain", "");
+            r->addHeader("Location", PAGE_LOGIN_FAIL);
+            req->send(r);
         }
+        return;
     }
-    return ok;
+
+    // Success → set cookie and redirect to /home.html (non-AJAX)
+    _sessionToken = makeSessionToken();
+    String cookie = String(COOKIE_NAME) + "=" + _sessionToken + "; Path=/; HttpOnly; SameSite=Lax";
+
+    if (wantsJson) {
+        auto r = req->beginResponse(200, "application/json", "{\"ok\":true}");
+        r->addHeader("Set-Cookie", cookie);
+        req->send(r);
+    } else {
+        auto r = req->beginResponse(302, "text/plain", "");
+        r->addHeader("Set-Cookie", cookie);
+        r->addHeader("Location", PAGE_HOME);
+        req->send(r);
+    }
 }
 
-// -----------------------------------------------------------
-// file upload (chunked) — saves to SPIFFS then applies config
-// -----------------------------------------------------------
+void WiFiManager::hLogout(AsyncWebServerRequest* req) {
+    _sessionToken.clear();
+    auto r = req->beginResponse(302, "text/plain", "");
+    r->addHeader("Set-Cookie", String(COOKIE_NAME) + "=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+    r->addHeader("Location", PAGE_LOGIN);
+    req->send(r);
+}
+
+bool WiFiManager::isAuthed(AsyncWebServerRequest* req) const {
+    if (_sessionToken.isEmpty()) return false;
+    String c = readCookie(req, COOKIE_NAME);
+    return c.length() && c == _sessionToken;
+}
+
+String WiFiManager::readCookie(AsyncWebServerRequest* req, const String& name) const {
+    if (!req->hasHeader("Cookie")) return String();
+    String cookie = req->header("Cookie");
+    String key = name + "=";
+    int p = cookie.indexOf(key);
+    if (p < 0) return String();
+    p += key.length();
+    int end = cookie.indexOf(';', p);
+    return end >= 0 ? cookie.substring(p, end) : cookie.substring(p);
+}
+
+String WiFiManager::makeSessionToken() const {
+    uint32_t r1 = (uint32_t)esp_random();
+    uint32_t r2 = (uint32_t)esp_random();
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%08X%08X", r1, r2);
+    return String(buf);
+}
+/* ==================== uploads ==================== */
 void handleFileUpload(AsyncWebServerRequest *request,
                       const String& filename, size_t index,
                       uint8_t *data, size_t len, bool final) {
@@ -638,4 +690,313 @@ void handleFileUpload(AsyncWebServerRequest *request,
         if (WiFiManager::instance) WiFiManager::instance->syncSpifToPrefs();
         request->send(200, "text/plain", "OK");
     }
+}
+
+/* ==================== helpers ==================== */
+void WiFiManager::sendJSON(AsyncWebServerRequest* req, const JsonDocument& doc, int code) {
+    String s; serializeJson(doc, s);
+    req->send(code, "application/json", s);
+}
+void WiFiManager::sendError(AsyncWebServerRequest* req, const char* msg, int code) {
+    DynamicJsonDocument d(128); d[J_ERR] = msg; sendJSON(req, d, code);
+}
+void WiFiManager::sendOK(AsyncWebServerRequest* req) {
+    DynamicJsonDocument d(64); d[J_OK] = true; sendJSON(req, d, 200);
+}
+
+void WiFiManager::attachTopologyLinks(DynamicJsonDocument& dst) {
+    if (!_esn) return;
+    String topo = _esn->serializeTopology();
+    DynamicJsonDocument t(65536);
+    if (!deserializeJson(t, topo)) dst[J_LINKS] = t[J_LINKS];
+}
+
+bool WiFiManager::applyExportedConfig(const JsonVariantConst& cfgObj) {
+    bool ok = true;
+    if (!cfgObj.isNull() && cfgObj.containsKey(J_LINKS) && _esn) ok &= _esn->configureTopology(cfgObj[J_LINKS]);
+    if (!cfgObj.isNull() && cfgObj.containsKey(J_ESN_CH)) {
+        int ch = cfgObj[J_ESN_CH].as<int>();
+        if (ch >= 1 && ch <= 13) {
+            if (_cfg) _cfg->PutInt(ESPNOW_CH_KEY, ch);
+            if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
+        }
+    }
+    return ok;
+}
+
+// ---- WiFiManager.cpp — inside hSysStatus(...) ----
+void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  DynamicJsonDocument d(1024);
+
+  // ----- Mode (AUTO / MANUAL) -----
+  int md = _cfg ? _cfg->GetInt(ESPNOW_MD_KEY, ESPNOW_MD_DEFAULT) : 0;
+  d["mode"] = (md == 1) ? "MANUAL" : "AUTO";
+
+  // ----- Wi-Fi quick summary -----
+  {
+    JsonObject wifi = d.createNestedObject("wifi");
+    if (_apOn) {
+      wifi["mode"] = "AP";
+      wifi["ip"]   = _wifi->softAPIP().toString();
+      wifi["ch"]   = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+    } else if (_wifi->status() == WL_CONNECTED) {
+      wifi["mode"] = "STA";
+      wifi["ip"]   = _wifi->localIP().toString();
+      wifi["rssi"] = _wifi->RSSI();
+      wifi["ch"]   = _wifi->channel();
+    } else {
+      wifi["mode"] = "OFF";
+    }
+  }
+
+  // ----- Power (stub unless you have real source) -----
+  {
+    JsonObject power = d.createNestedObject("power");
+    bool onBattery = _cfg ? _cfg->GetBool("PW_BAT", false) : false; // optional flag in NVS
+    power["source"] = onBattery ? "BATTERY" : "WALL";
+    power["ok"]     = true;
+    power["detail"] = "nominal";
+  }
+
+  // ----- Health / faults (fill from managers if you have them) -----
+  {
+    JsonObject health = d.createNestedObject("health");
+    JsonArray faults  = health.createNestedArray("faults");
+    bool okHealth = true;
+    // examples:
+    // if (RTCManager* rtc = (_esn ? _esn->rtc() : nullptr); rtc && rtc->lostPower()) { faults.add("RTC lost power"); okHealth = false; }
+    // if (_cool && _cool->fault()) { faults.add("Cooling fault"); okHealth = false; }
+    health["ok"] = okHealth;
+  }
+
+  // ----- Buzzer state (from NVS) -----
+  d["buzzer_enabled"] = _cfg ? _cfg->GetBool(BUZZER_FEEDBACK_KEY, BUZZER_FEEDBACK_DEFAULT) : BUZZER_FEEDBACK_DEFAULT;
+
+  // ----- Time (RTC first, system clock fallback) -----
+  {
+    RTCManager* rtc = (_esn ? _esn->rtc() : nullptr);
+    JsonObject jtime = d.createNestedObject("time");
+    if (rtc) {
+      jtime["iso"]        = isoFromRTC(rtc);
+      jtime["date"]       = rtc->dateString();
+      jtime["time"]       = rtc->timeString();
+      jtime["lost_power"] = rtc->lostPower();
+      bool okT=false; float tc = rtc->readTemperatureC(&okT);
+      if (okT) jtime["tempC"] = tc;       // RTC’s on-die temperature (°C)
+    } else {
+      jtime["iso"]        = isoFromSystemClock();
+      jtime["lost_power"] = true;         // unknown/not active
+    }
+  }
+
+  // ----- Uptime -----
+  d["uptime_ms"] = (uint32_t)millis();
+
+  // ---- Cooling snapshot (if present) ----
+  if (_cool) {
+    JsonObject c = d.createNestedObject("cooling");
+    float t = _cool->lastTempC();
+    if (!isnan(t)) c["tempC"] = t;              // module temperature (°C) from CoolingManager
+    c["speedPct"]    = _cool->lastSpeedPct();
+
+    const auto ma = _cool->modeApplied();
+    const auto mr = _cool->modeRequested();
+    auto modeToStr = [](CoolingManager::Mode m)->const char*{
+      switch(m){
+        case CoolingManager::COOL_STOPPED: return "STOPPED";
+        case CoolingManager::COOL_ECO:     return "ECO";
+        case CoolingManager::COOL_NORMAL:  return "NORMAL";
+        case CoolingManager::COOL_FORCED:  return "FORCED";
+        case CoolingManager::COOL_AUTO:    return "AUTO";
+        default: return "UNKNOWN";
+      }
+    };
+    c["modeApplied"]   = modeToStr(ma);
+    c["modeRequested"] = modeToStr(mr);
+  }
+
+  // ---- Sleep snapshot (if present) ----
+  if (_slp) {
+    JsonObject s = d.createNestedObject("sleep");
+    // If you store a configured timeout separately, emit that here instead.
+    s["timeout_sec"]         = _slp->secondsUntilSleep() >= 0
+                               ? (uint32_t)(_slp->secondsUntilSleep() + (uint32_t)(_slp->nowEpoch() - _slp->lastActivityEpoch()))
+                               : 0;
+    s["secs_to_sleep"]       = _slp->secondsUntilSleep();
+    s["last_activity_epoch"] = _slp->lastActivityEpoch();
+    s["next_wake_epoch"]     = _slp->nextWakeEpoch();
+    s["armed"]               = _slp->isArmed();
+  }
+
+  sendJSON(req, d);
+}
+
+// POST { "enabled": true|false }
+void WiFiManager::hBuzzerSet(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  static String body; if (index == 0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(128);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  JsonVariantConst root = d.as<JsonVariantConst>();
+  if (root.isNull() || !root.containsKey("enabled")) { sendError(req, "Missing 'enabled'"); return; }
+
+  bool en = root["enabled"].as<bool>();
+
+  if (_cfg) _cfg->PutBool(BUZZER_FEEDBACK_KEY, en);
+
+  DynamicJsonDocument res(64);
+  res["ok"] = true;
+  res["enabled"] = en;
+  sendJSON(req, res);
+}
+
+void WiFiManager::hSystemReset(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  (void)data; (void)len; (void)index; (void)total;
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  if (_cfg) _cfg->PutBool(RESET_FLAG_KEY, true);
+  sendOK(req);
+}
+
+void WiFiManager::hSystemRestart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  (void)data; (void)len; (void)index; (void)total;
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  sendOK(req);
+  delay(150);
+  ESP.restart();
+}
+
+void WiFiManager::hCoolStatus(AsyncWebServerRequest* req) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  DynamicJsonDocument d(256);
+  if (_cool) {
+    float t = _cool->lastTempC();
+    if (!isnan(t)) d["tempC"] = t;
+    d["speedPct"] = _cool->lastSpeedPct();
+    auto modeToStr = [](CoolingManager::Mode m)->const char*{
+      switch(m){
+        case CoolingManager::COOL_STOPPED: return "STOPPED";
+        case CoolingManager::COOL_ECO:     return "ECO";
+        case CoolingManager::COOL_NORMAL:  return "NORMAL";
+        case CoolingManager::COOL_FORCED:  return "FORCED";
+        case CoolingManager::COOL_AUTO:    return "AUTO";
+        default: return "UNKNOWN";
+      }
+    };
+    d["modeApplied"]   = modeToStr(_cool->modeApplied());
+    d["modeRequested"] = modeToStr(_cool->modeRequested());
+  }
+  sendJSON(req, d);
+}
+
+static bool parseJsonBody(AsyncWebServerRequest* req, String& out) {
+  // accumulate body from chunked upload
+  // NOTE: call this in the lambda—here we only define helper for clarity
+  return false;
+}
+
+void WiFiManager::hCoolMode(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  static String body; if (index==0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(128);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  const char* m = d["mode"] | nullptr;
+  if (!m) { sendError(req, "Missing 'mode'"); return; }
+
+  if (_cool) {
+    auto strToMode = [](const String& s)->CoolingManager::Mode{
+      if (s=="AUTO")    return CoolingManager::COOL_AUTO;
+      if (s=="ECO")     return CoolingManager::COOL_ECO;
+      if (s=="NORMAL")  return CoolingManager::COOL_NORMAL;
+      if (s=="FORCED")  return CoolingManager::COOL_FORCED;
+      if (s=="STOPPED") return CoolingManager::COOL_STOPPED;
+      return CoolingManager::COOL_AUTO;
+    };
+    _cool->setMode(strToMode(String(m)));   // applies on next periodic update
+  }
+  sendOK(req);
+}
+
+void WiFiManager::hCoolSpeed(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  static String body; if (index==0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(128);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  int pct = d["pct"] | -1;
+  if (pct < 0 || pct > 100) { sendError(req, "pct 0..100"); return; }
+
+  if (_cool) _cool->setManualSpeedPct((uint8_t)pct);
+  sendOK(req);
+}
+
+
+void WiFiManager::hSleepStatus(AsyncWebServerRequest* req) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  DynamicJsonDocument d(256);
+  if (_slp) {
+    d["timeout_sec"]       = SLEEP_TIMEOUT_SEC_DEFAULT; // if you store it, emit stored value
+    d["secs_to_sleep"]     = _slp->secondsUntilSleep();
+    d["last_activity_epoch"]= _slp->lastActivityEpoch();
+    d["next_wake_epoch"]   = _slp->nextWakeEpoch();
+    d["armed"]             = _slp->isArmed();
+  }
+  sendJSON(req, d);
+}
+
+void WiFiManager::hSleepTimeout(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  static String body; if (index==0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(128);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  uint32_t sec = d["timeout_sec"] | 0;
+  if (!sec) { sendError(req, "timeout_sec > 0"); return; }
+
+  if (_slp) _slp->setInactivityTimeoutSec(sec);
+  sendOK(req);
+}
+
+void WiFiManager::hSleepReset(AsyncWebServerRequest* req) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  if (_slp) _slp->resetActivity();
+  sendOK(req);
+}
+
+void WiFiManager::hSleepSchedule(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+  static String body; if (index==0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(128);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+
+  bool ok = false;
+  if (d.containsKey("after_sec")) {
+    uint32_t s = d["after_sec"] | 1;
+    if (_slp) ok = _slp->sleepAfterSeconds(s);
+  } else if (d.containsKey("wake_epoch")) {
+    uint32_t e = d["wake_epoch"] | 0;
+    if (_slp && e) ok = _slp->sleepUntilEpoch(e);
+  } else {
+    sendError(req, "Need 'after_sec' or 'wake_epoch'"); return;
+  }
+
+  if (!ok) { sendError(req, "Schedule failed", 500); return; }
+  sendOK(req);
 }

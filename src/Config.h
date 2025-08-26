@@ -66,6 +66,17 @@
 
 #define ESPNOW_CH_DEFAULT           1
 #define ESPNOW_MD_DEFAULT           0U
+// ============================================================================
+// [3] Timekeeping & Security (NVS keys ≤ 6 chars)
+// ============================================================================
+// ...existing keys...
+
+// --- Web UI session credentials (stored in NVS) ---
+#define WEB_USER_KEY                "SEUSER"   // 6  session username
+#define WEB_PASS_KEY                "SEPASS"   // 6  session password
+
+#define WEB_USER_DEFAULT            "admin"    // default username
+#define WEB_PASS_DEFAULT            ""         // default password (empty => set via UI on first login)
 
 // ============================================================================
 // [3] Timekeeping & Security (NVS keys ≤ 6 chars)

@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include "Config.h"
 #include "ConfigManager.h"
+#include <vector>
 
 // ---- NVS key for enabling buzzer feedback (≤ 6 chars) ----
 #ifndef BUZZER_FEEDBACK_KEY

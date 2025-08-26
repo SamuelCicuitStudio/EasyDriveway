@@ -143,6 +143,8 @@ public:
   static bool   macStrToBytes(const String& mac, uint8_t out[6]);
   String icmMacStr();
   bool isPeerOnline(ModuleType t, uint8_t index) const;
+  RTCManager* rtc() const { return _rtc; };
+
 
 private:
   // ---------- NVS keys (<= 6 chars each) ----------
