@@ -29,6 +29,23 @@
 // Defaults
 #define DEVICE_ID_DEFAULT           "ICM01"
 #define RESET_FLAG_DEFAULT          false
+// [2] Identity (NVS keys ≤ 6 chars)
+#define DEV_FNAME_KEY    "FNAME"   // Friendly name shown in UI
+#define DEV_HOST_KEY     WIFI_STA_HOST_KEY  // reuse existing "STAHNM"
+#define DEV_ID_KEY       DEVICE_ID_KEY      // reuse existing "DEVICE"
+
+// [3] Versions (NVS keys ≤ 6 chars)
+#define FW_VER_KEY       "FWVER"   // Firmware version string
+#define SW_VER_KEY       "SWVER"   // Software version string
+#define HW_VER_KEY       "HWVER"   // Hardware rev string, e.g., "A1"
+#define BUILD_STR_KEY    "BUILD"   // Build date/hash string
+
+// Defaults (customize as needed)
+#define DEV_FNAME_DEFAULT    "ICM"
+#define FW_VER_DEFAULT       "1.0.0"
+#define SW_VER_DEFAULT       "1.0.0"
+#define HW_VER_DEFAULT       "A1"
+#define BUILD_STR_DEFAULT    ""
 
 // ============================================================================
 // [2] Wireless & BLE (NVS keys ≤ 6 chars)

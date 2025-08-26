@@ -124,4 +124,20 @@
 // Power
 #define J_PWRACT    "pwr_action"
 
+// Settings / Identity / Versions (JSON fields)
+#define J_DEV_ID         "dev_id"
+#define J_HOST_NAME      "host_name"
+#define J_FRIENDLY_NAME  "friendly_name"
+#define J_FW_VER         "fw_ver"
+#define J_SW_VER         "sw_ver"
+#define J_HW_VER         "hw_ver"
+#define J_BUILD          "build"
+#define J_PASS_PIN       "pass_pin"
+
+// Web UI creds
+#define J_WEB_USER "web_user"
+#define J_WEB_PASS "web_pass"
+
+
+
 #endif // WIFI_API_H

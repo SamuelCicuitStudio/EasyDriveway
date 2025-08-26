@@ -344,6 +344,11 @@ void ConfigManager::initializeVariables() {
     PutString(WEB_PASS_KEY, WEB_PASS_DEFAULT);
 
     PutString(SYS_TOPOLOGY_KEY,    SYS_TOPOLOGY_DEFAULT);
+    PutString(DEV_FNAME_KEY, DEV_FNAME_DEFAULT);
+    PutString(FW_VER_KEY,    FW_VER_DEFAULT);
+    PutString(SW_VER_KEY,    SW_VER_DEFAULT);
+    PutString(HW_VER_KEY,    HW_VER_DEFAULT);
+    PutString(BUILD_STR_KEY, BUILD_STR_DEFAULT);
 
 }
 

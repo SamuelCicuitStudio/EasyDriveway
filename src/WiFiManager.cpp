@@ -285,9 +285,9 @@ void WiFiManager::handleThanks(AsyncWebServerRequest* request) {
 
 /* ==================== Config ==================== */
 void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
-  DynamicJsonDocument d(1024);
+  DynamicJsonDocument d(2048);  // a bit more headroom
 
-  // ---- STA (wifi.html form expects these) ----
+  // ---- STA (wifi.html expects these exact keys) ----
   d[J_WIFI_SSID] = _cfg ? _cfg->GetString(WIFI_STA_SSID_KEY, WIFI_STA_SSID_DEFAULT)
                         : String(WIFI_STA_SSID_DEFAULT);
   d[J_WIFI_PSK]  = _cfg ? _cfg->GetString(WIFI_STA_PASS_KEY, WIFI_STA_PASS_DEFAULT)
@@ -300,15 +300,34 @@ void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
                       : String(DEVICE_AP_AUTH_PASS_DEFAULT);
 
   // ---- ESP-NOW channel (existing) ----
-  d[J_ESN_CH]  = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+  {
+    int ch = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+    if (ch < 1 || ch > 13) ch = ESPNOW_CH_DEFAULT;
+    d[J_ESN_CH] = ch;
+  }
 
-  // ---- BLE (wifi.html form expects these) ----
+  // ---- BLE + Identity ----
   d[J_BLE_NAME] = _cfg ? _cfg->GetString(DEVICE_BLE_NAME_KEY, DEVICE_BLE_NAME_DEFAULT)
                        : String(DEVICE_BLE_NAME_DEFAULT);
   d[J_BLE_PASS] = _cfg ? _cfg->GetInt(DEVICE_BLE_AUTH_PASS_KEY, DEVICE_BLE_AUTH_PASS_DEFAULT)
                        : DEVICE_BLE_AUTH_PASS_DEFAULT;
 
-  // ---- Read-only network status card (existing shape) ----
+  d[J_DEV_ID]        = _cfg ? _cfg->GetString(DEVICE_ID_KEY,        DEVICE_ID_DEFAULT)        : String(DEVICE_ID_DEFAULT);
+  d[J_HOST_NAME]     = _cfg ? _cfg->GetString(WIFI_STA_HOST_KEY,    WIFI_STA_HOST_DEFAULT)    : String(WIFI_STA_HOST_DEFAULT);
+  d[J_FRIENDLY_NAME] = _cfg ? _cfg->GetString(DEV_FNAME_KEY,        DEV_FNAME_DEFAULT)        : String(DEV_FNAME_DEFAULT);
+
+  // ---- Versions ----
+  d[J_FW_VER] = _cfg ? _cfg->GetString(FW_VER_KEY,    FW_VER_DEFAULT)    : String(FW_VER_DEFAULT);
+  d[J_SW_VER] = _cfg ? _cfg->GetString(SW_VER_KEY,    SW_VER_DEFAULT)    : String(SW_VER_DEFAULT);
+  d[J_HW_VER] = _cfg ? _cfg->GetString(HW_VER_KEY,    HW_VER_DEFAULT)    : String(HW_VER_DEFAULT);
+  d[J_BUILD]  = _cfg ? _cfg->GetString(BUILD_STR_KEY, BUILD_STR_DEFAULT) : String(BUILD_STR_DEFAULT);
+
+  // ---- Access / PINs ----
+  d[J_PASS_PIN] = _cfg ? _cfg->GetString(PASS_PIN_KEY, PASS_PIN_DEFAULT) : String(PASS_PIN_DEFAULT);
+  d[J_WEB_USER] = _cfg ? _cfg->GetString(WEB_USER_KEY, WEB_USER_DEFAULT) : String(WEB_USER_DEFAULT);
+  d[J_WEB_PASS] = _cfg ? _cfg->GetString(WEB_PASS_KEY, WEB_PASS_DEFAULT) : String(WEB_PASS_DEFAULT);
+
+  // ---- Read-only network status (unchanged shape) ----
   JsonObject net = d.createNestedObject("net");
   if (_apOn) {
     net[J_MODE] = "AP";
@@ -326,12 +345,16 @@ void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
   sendJSON(req, d);
 }
 
-void WiFiManager::hCfgSave(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+void WiFiManager::hCfgSave(AsyncWebServerRequest* req,
+                           uint8_t* data, size_t len,
+                           size_t index, size_t total) {
   static String body; if (index == 0) body.clear();
-  body += String((char*)data).substring(0, len);
+  body += String((const char*)data).substring(0, len);
   if (index + len < total) return;
 
-  DynamicJsonDocument d(2048);
+  if (!_cfg) { sendError(req, "Config unavailable", 500); return; }
+
+  DynamicJsonDocument d(4096);
   if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
   JsonVariantConst root = d.as<JsonVariantConst>();
   if (root.isNull()) { sendError(req, "Empty JSON"); return; }
@@ -344,22 +367,38 @@ void WiFiManager::hCfgSave(AsyncWebServerRequest* req, uint8_t* data, size_t len
   if (root.containsKey(J_BLE_NAME)) _cfg->PutString(DEVICE_BLE_NAME_KEY,      root[J_BLE_NAME].as<const char*>());
   if (root.containsKey(J_BLE_PASS)) _cfg->PutInt   (DEVICE_BLE_AUTH_PASS_KEY, root[J_BLE_PASS].as<int>());
 
+  // ---- Identity ----
+  if (root.containsKey(J_DEV_ID))        _cfg->PutString(DEVICE_ID_KEY,     root[J_DEV_ID].as<const char*>());
+  if (root.containsKey(J_HOST_NAME))     _cfg->PutString(WIFI_STA_HOST_KEY, root[J_HOST_NAME].as<const char*>());
+  if (root.containsKey(J_FRIENDLY_NAME)) _cfg->PutString(DEV_FNAME_KEY,     root[J_FRIENDLY_NAME].as<const char*>());
+
+  // ---- Versions ----
+  if (root.containsKey(J_FW_VER)) _cfg->PutString(FW_VER_KEY,    root[J_FW_VER].as<const char*>());
+  if (root.containsKey(J_SW_VER)) _cfg->PutString(SW_VER_KEY,    root[J_SW_VER].as<const char*>());
+  if (root.containsKey(J_HW_VER)) _cfg->PutString(HW_VER_KEY,    root[J_HW_VER].as<const char*>());
+  if (root.containsKey(J_BUILD))  _cfg->PutString(BUILD_STR_KEY, root[J_BUILD].as<const char*>());
+
+  // ---- Web UI credentials ----
+  if (root.containsKey(J_WEB_USER)) _cfg->PutString(WEB_USER_KEY, root[J_WEB_USER].as<const char*>());
+  if (root.containsKey(J_WEB_PASS)) _cfg->PutString(WEB_PASS_KEY, root[J_WEB_PASS].as<const char*>());
+
+  // ---- PIN ----
+  if (root.containsKey(J_PASS_PIN)) _cfg->PutString(PASS_PIN_KEY, root[J_PASS_PIN].as<const char*>());
+
   // ---- ESP-NOW channel (validate 1..13) ----
   if (root.containsKey(J_ESN_CH)) {
     int ch = root[J_ESN_CH].as<int>();
     if (ch >= 1 && ch <= 13) {
       _cfg->PutInt(ESPNOW_CH_KEY, ch);
-      // If currently in AP, keep ESP-NOW aligned immediately (optional, keeps live preview right)
-      if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
+      if (_apOn && _esn) _esn->setChannel((uint8_t)ch); // keep live preview aligned
     }
   }
 
-  // ---- STA (save only; DO NOT connect here) ----
+  // ---- STA creds (save only; DO NOT connect here) ----
   if (root.containsKey(J_WIFI_SSID)) _cfg->PutString(WIFI_STA_SSID_KEY, root[J_WIFI_SSID].as<const char*>());
   if (root.containsKey(J_WIFI_PSK))  _cfg->PutString(WIFI_STA_PASS_KEY, root[J_WIFI_PSK].as<const char*>());
 
-  // No immediate STA connect: wifi.html is a setup page.
-  sendOK(req);
+  sendOK(req);  // uniform { "ok": true }
 }
 
 void WiFiManager::hCfgExport(AsyncWebServerRequest* req) {
