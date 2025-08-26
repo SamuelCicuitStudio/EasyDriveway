@@ -275,3 +275,67 @@ select, input[type="number"], input[type="text"]{
   margin-top:6px; padding:6px 8px; border-radius:8px; font-size:12px;
   background:rgba(0,255,174,.08); border:1px solid rgba(0,255,174,.35); color:#bff6e6;
 }
+
+
+/* === Home -> Topology-like layout positions === */
+.card-system  { grid-column:1; grid-row:1; }
+.card-power   { grid-column:1; grid-row:2; }
+.card-cooling { grid-column:2; grid-row:1; display:flex; flex-direction:column; }
+.card-sleep   { grid-column:2; grid-row:2; display:flex; flex-direction:column; }
+.card-faults  { grid-column:3; grid-row:1 / span 2; display:flex; flex-direction:column; }
+.card-time    { display:none; } /* merged into system/cooling layout or unused */
+
+/* Faults list scroll */
+.card-faults .list{
+  list-style:none; margin:0; padding:0;
+  flex:1 1 auto; min-height:0; overflow:auto;
+  border:1px solid #1f2940; border-radius:9px; padding:6px; background:#0d1424;
+}
+.card-faults .list li{ padding:6px 8px; border-bottom:1px dashed #1f2940; font-size:12px }
+.card-faults .list li:last-child{ border-bottom:0 }
+.card-faults .list li.ok{ color:#7fd9bf }
+.card-faults .list li.err{ color:#ff97a1 }
+
+/* Sleep card: space for injected controls */
+.card-sleep .divider{ height:8px }
+.card-sleep .row{ align-items:center }
+
+/* Make the wrap area non-scrolling, cards manage overflow internally (already) */
+
+/* Optional: tighten hero icon to match topology visuals */
+.home-hero{ width:56px; height:56px; }
+
+
+
+/* ==== Fix overflow: fixed-size inner containers with internal scroll ==== */
+.card{ display:flex; flex-direction:column; min-height:0; }
+
+.card-system, .card-power, .card-cooling, .card-sleep { min-height:0; }
+
+.card-system .system-body,
+.card-power  .power-body,
+.card-cooling .cool-body,
+.card-sleep  .sleep-body {
+  flex:1 1 auto;
+  min-height:0;
+  overflow:auto;                   /* internal scrolling when needed */
+  display:block;
+}
+
+/* Cooling / Sleep inner grids use all available space and scroll internally */
+.card-cooling .cool-body .cool-grid{
+  display:grid; grid-template-columns: 1fr 1fr; gap: var(--g);
+}
+.card-sleep .sleep-body .sleep-grid{
+  display:grid; grid-template-columns: 1fr 1fr; gap: var(--g);
+}
+
+/* Ensure rows and kvs don't cause overflow */
+.card .row{ flex-wrap:wrap }
+.card .kv{ min-width:0 }
+
+/* Tighten header spacing a touch to avoid pushing content */
+.card header{ margin-bottom:6px }
+
+/* Faults keeps its scroll list as before */
+

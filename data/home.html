@@ -40,14 +40,16 @@
 
     <!-- Content -->
     <div class="wrap">
-      <div class="grid">
+      <div class="grid grid-3">
 
         <!-- System Overview -->
-        <section class="card">
+        <section class="card card-system">
           <header>
             <h3>System</h3>
             <span id="modeBadge" class="badge">AUTO</span>
           </header>
+          <div class="system-body">
+
           <div class="row smallgap">
             <div class="kv">
               <label>Mode</label>
@@ -58,14 +60,34 @@
               <div id="wifiVal" class="value text-info">—</div>
             </div>
           </div>
+          <div class="divider"></div>
+
+          <header><h3>Controls</h3></header>
+          <div class="row">
+            <div class="switch">
+              <span class="lbl">Buzzer Feedback</span>
+              <input id="buzzerToggle" type="checkbox"/>
+              <span class="slider" aria-hidden="true"></span>
+            </div>
+            <div class="controls">
+              <button id="btnReset" class="btn warn">Factory Reset</button>
+              <button id="btnRestart" class="btn danger">Restart</button>
+            </div>
+          </div>
+          <div id="toast" class="toast" hidden>Saved</div>
+        
+        
+          </div>
         </section>
 
         <!-- Power -->
-        <section class="card">
+        <section class="card card-power">
           <header>
             <h3>Power</h3>
             <span id="pwrBadge" class="badge">—</span>
           </header>
+          <div class="power-body">
+
           <div class="row smallgap">
             <div class="kv">
               <label>Source</label>
@@ -76,10 +98,12 @@
               <div id="pwrHlth" class="value text-ok">OK</div>
             </div>
           </div>
+        
+          </div>
         </section>
 
         <!-- Time / Uptime -->
-        <section class="card">
+        <section class="card card-time">
           <header><h3>Time</h3></header>
           <div class="row smallgap">
             <div class="kv lg">
@@ -95,7 +119,7 @@
         </section>
 
         <!-- Faults -->
-        <section class="card">
+        <section class="card card-faults">
           <header>
             <h3>Faults</h3>
             <span id="fltBadge" class="badge badge-ok">OK</span>
@@ -106,11 +130,13 @@
         </section>
 
         <!-- Cooling -->
-        <section class="card">
+        <section class="card card-cooling">
           <header>
             <h3>Cooling</h3>
             <span id="coolBadge" class="badge">AUTO</span>
           </header>
+          <div class="cool-body">
+
           <div class="cool-grid">
             <div class="kv">
               <label>Module Temp</label>
@@ -137,14 +163,18 @@
               <div class="sub">Fan: <span id="coolPct" class="value text-info">0</span>%</div>
             </div>
           </div>
+        
+          </div>
         </section>
 
         <!-- Sleep -->
-        <section class="card">
+        <section class="card card-sleep">
           <header>
             <h3>Sleep</h3>
             <span id="sleepBadge" class="badge badge-info">ARMED</span>
           </header>
+          <div class="sleep-body">
+
           <div class="sleep-grid">
             <div class="kv">
               <label>Inactivity Timeout (sec)</label>
@@ -169,26 +199,9 @@
               <div class="sub">Armed: <span id="sleepArmed" class="value text-info">—</span></div>
             </div>
           </div>
-        </section>
-
-        <!-- Controls -->
-        <section class="card full">
-          <header><h3>Controls</h3></header>
-          <div class="row">
-            <div class="switch">
-              <span class="lbl">Buzzer Feedback</span>
-              <input id="buzzerToggle" type="checkbox"/>
-              <span class="slider" aria-hidden="true"></span>
-            </div>
-            <div class="controls">
-              <button id="btnReset" class="btn warn">Factory Reset</button>
-              <button id="btnRestart" class="btn danger">Restart</button>
-            </div>
+        
           </div>
-          <div id="toast" class="toast" hidden>Saved</div>
-        </section>
-
-      </div>
+        </section></div>
     </div>
   </div>
 
