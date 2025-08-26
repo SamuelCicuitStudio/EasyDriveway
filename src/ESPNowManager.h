@@ -115,6 +115,7 @@ public:
   bool relayManualSet(const String& mac, uint8_t ch, bool on); // via MAC
   bool presenceGetStatus(uint8_t idx);
   bool presenceSetMode(uint8_t idx, uint8_t mode);
+  bool presenceGetDayNight(uint8_t idx);  // send SENS_GET_DAYNIGHT
   bool sensorSetMode(const String& mac, bool autoMode);    // via MAC
   bool sensorTestTrigger(const String& mac);               // SENS_TRIG (test)
 
@@ -158,6 +159,11 @@ public:
     return (idx < ICM_MAX_RELAYS) ? _relTempMs[idx] : 0;
   }
 
+
+  // Day/Night caches
+  // Returns: -1 = unknown, 0 = night, 1 = day
+  int8_t  lastSensorDayFlag(uint8_t idx) const { return (idx < ICM_MAX_SENSORS) ? _sensDayNight[idx] : -1; }
+  uint32_t lastSensorDayFlagUpdateMs(uint8_t idx) const { return (idx < ICM_MAX_SENSORS) ? _sensDNMs[idx] : 0; }
 private:
   // ---------- NVS keys (<= 6 chars each) ----------
   String keyMd() const   { return String("ESMODE"); }  // system mode
@@ -261,6 +267,11 @@ private:
   // temperature caches (updated on replies)
   float    _pwrTempC = NAN;
   uint32_t _pwrTempMs = 0;
+
+  // Day/Night caches (updated on replies)
+  int8_t   _sensDayNight[ICM_MAX_SENSORS];   // -1 unknown, 0 night, 1 day
+  uint32_t _sensDNMs[ICM_MAX_SENSORS];       // last update timestamp (ms)
+
 
   float    _relTempC[ICM_MAX_RELAYS] = { NAN };
   uint32_t _relTempMs[ICM_MAX_RELAYS] = { 0 };

@@ -20,34 +20,62 @@ ESPNowManager::ESPNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc)
 
 // ============ Begin/End ============
 bool ESPNowManager::begin(uint8_t channelDefault, const char* pmk16) {
-  _channel = (uint8_t)_cfg->GetInt(keyCh().c_str(), (int)channelDefault);
-  _mode    = (uint8_t)_cfg->GetInt(keyMd().c_str(), (int)MODE_AUTO);
+  // Load persisted config (fallback to provided defaults)
+  uint8_t ch  = (uint8_t)_cfg->GetInt(keyCh().c_str(), (int)channelDefault);
+  uint8_t mode= (uint8_t)_cfg->GetInt(keyMd().c_str(), (int)MODE_AUTO);
 
-  // Try to load a saved topology mirror
-  loadTopologyFromNvs();
+  // Clamp Wi-Fi channel to a sane range (1..13 on most ESP32 regions)
+  if (ch < 1 || ch > 13) ch = 1;
+  _channel = ch;
+  _mode    = mode;
 
-  for (size_t i=0; i<ICM_MAX_RELAYS; ++i) { _relTempC[i] = NAN; _relTempMs[i] = 0; }
-  _pwrTempC = NAN; _pwrTempMs = 0;
+  // Try to load saved topology mirrors (peers/topology JSON)
+  (void)loadTopologyFromNvs();
 
+  // Reset temperature caches
+  for (size_t i = 0; i < ICM_MAX_RELAYS; ++i) {
+    _relTempC[i] = NAN;
+    _relTempMs[i] = 0;
+  }
+  _pwrTempC = NAN;
+  _pwrTempMs = 0;
+
+  // Reset day/night caches
+  for (size_t i = 0; i < ICM_MAX_SENSORS; ++i) {
+    _sensDayNight[i] = -1;  // -1 = unknown
+    _sensDNMs[i] = 0;       // last update ms
+  }
+
+  // Bring up Wi-Fi in STA mode and fix channel before esp-now init
   WiFi.mode(WIFI_STA);
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous(false);
 
-  if (esp_now_init() != ESP_OK) { LOGE(1001,"esp_now_init failed"); return false; }
-
-  if (pmk16 && strlen(pmk16)==16) {
-    memcpy(_pmk, pmk16, 16); _pmk[16]=0;
-    esp_now_set_pmk((uint8_t*)_pmk);
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    LOGE(1001, "esp_now_init failed");
+    return false;
   }
 
+  // Optional PMK (16 bytes)
+  if (pmk16 && strlen(pmk16) == 16) {
+    memcpy(_pmk, pmk16, 16);
+    _pmk[16] = 0;
+    (void)esp_now_set_pmk(reinterpret_cast<const uint8_t*>(_pmk));
+  } else {
+    _pmk[0] = 0; // mark as unset
+  }
+
+  // Register callbacks
   esp_now_register_recv_cb(&ESPNowManager::onRecvThunk);
   esp_now_register_send_cb(&ESPNowManager::onSentThunk);
 
   _started = true;
-  LOGI(1000,"ESP-NOW started ch=%u mode=%u", _channel, _mode);
+  LOGI(1000, "ESP-NOW started ch=%u mode=%u", _channel, _mode);
   return true;
 }
+
 void ESPNowManager::end() {
   if (!_started) return;
   esp_now_unregister_recv_cb();
@@ -643,6 +671,7 @@ bool ESPNowManager::relaySetMode(uint8_t idx, uint8_t ch, uint8_t mode){
   uint8_t b[2]={ch,mode}; return enqueueToPeer(pr,CmdDomain::RELAY,REL_SET_MODE,b,2,true);
 }
 bool ESPNowManager::presenceGetStatus(uint8_t idx){ return enqueueToPeer(&_sensors[idx],CmdDomain::SENS,SENS_GET,nullptr,0,true); }
+bool ESPNowManager::presenceGetDayNight(uint8_t idx){ return enqueueToPeer(&_sensors[idx],CmdDomain::SENS,SENS_GET_DAYNIGHT,nullptr,0,true); }
 bool ESPNowManager::presenceSetMode(uint8_t idx, uint8_t mode){
   PeerRec* pr=nullptr; if(!ensurePeer(ModuleType::PRESENCE,idx,pr)) return false;
   uint8_t b[1]={mode}; return enqueueToPeer(pr,CmdDomain::SENS,SENS_SET_MODE,b,1,true);

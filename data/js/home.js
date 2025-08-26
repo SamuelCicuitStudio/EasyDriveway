@@ -27,6 +27,28 @@
   // Toast
   const toast = $('toast');
   const toastMsg = (t)=>{ toast.textContent=t||'Saved'; toast.hidden=false; setTimeout(()=>toast.hidden=true,1600); };
+  // ---- Audio feedback (WebAudio) ----
+  let __audioCtx = null;
+  function __ensureAudioCtx() {
+    try{
+      if (!__audioCtx) __audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (__audioCtx.state === 'suspended') __audioCtx.resume().catch(()=>{});
+    }catch(e){}
+    return __audioCtx;
+  }
+  function playBeep(freq=880, dur=0.12, type='square', vol=0.1) {
+    try{
+      const ctx = __ensureAudioCtx(); if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(vol, ctx.currentTime);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + dur);
+    }catch(e){}
+  }
+
 
   // Helpers
   const fmtUptime = (ms) => {
@@ -157,18 +179,102 @@
   });
 
   // -------- Buzzer toggle --------
-  buzzerToggle.addEventListener('change', async () => {
-    try{
-      const res = await fetch('/api/buzzer/set', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ enabled: buzzerToggle.checked })
+  (function initBuzzer() {
+    if (!buzzerToggle) return;
+
+    async function postJSON(url, body, timeoutMs=2500) {
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+          cache:'no-store',
+          credentials:'same-origin'
+        });
+        if (res.ok) return true;
+        return false;
+      } finally {
+        clearTimeout(t);
+      }
+    }
+    async function getQuery(url, params, timeoutMs=2500) {
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      const qp = new URLSearchParams(params).toString();
+      try {
+        const res = await fetch(`${url}?${qp}`, {
+          method:'GET',
+          signal: ctrl.signal,
+          cache:'no-store',
+          credentials:'same-origin'
+        });
+        return res.ok;
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    async function sendBuzzer(enabled) {
+      // Try common API variants until one works
+      const tries = [
+        () => postJSON('/api/buzzer/set', { enabled }),
+        () => postJSON('/api/buzzer',     { enabled }),
+        () => postJSON('/api/buzzer/set', { on: enabled }),
+        () => postJSON('/api/buzzer',     { on: enabled }),
+        () => getQuery('/api/buzzer/set', { enabled }),
+        () => getQuery('/api/buzzer',     { enabled }),
+      ];
+      for (const tryFn of tries) {
+        try {
+          const ok = await tryFn();
+          if (ok) return true;
+        } catch (e) {
+          /* keep trying */
+        }
+      }
+      return false;
+    }
+
+    function clickBeepSuccess(enabled) {
+      playBeep(enabled ? 1200 : 600, 0.09, 'square', 0.08);
+    }
+    function clickBeepLocal() {
+      playBeep(880, 0.08, 'square', 0.08);
+    }
+
+    async function handleToggle(next) {
+      // immediate local feedback so UI feels responsive
+      clickBeepLocal();
+      const ok = await sendBuzzer(next);
+      if (ok) {
+        toastMsg('Buzzer ' + (next ? 'enabled' : 'disabled'));
+        clickBeepSuccess(next);
+      } else {
+        // revert UI on failure
+        buzzerToggle.checked = !next;
+        toastMsg('Failed');
+      }
+    }
+
+    // Events: checkbox, plus the entire switch container (for CSS overlay cases)
+    const container = buzzerToggle.closest('.switch');
+    buzzerToggle.addEventListener('change', () => handleToggle(buzzerToggle.checked));
+    if (container) {
+      container.addEventListener('click', (ev) => {
+        if (ev.target === buzzerToggle) return; // native change will handle
+        ev.preventDefault();
+        const next = !buzzerToggle.checked;
+        buzzerToggle.checked = next;
+        handleToggle(next);
       });
-      if (!res.ok) throw new Error();
-      toastMsg('Buzzer '+(buzzerToggle.checked?'enabled':'disabled'));
-    }catch(e){ toastMsg('Failed'); }
-  });
+    }
+  })();
 
   // -------- Reset / Restart --------
+
   btnReset.addEventListener('click', async () => {
     if (!confirm('Factory reset settings?')) return;
     try{

@@ -63,8 +63,9 @@ enum : uint8_t {
 enum : uint8_t {
   SENS_GET      = 0x30,
   SENS_SET_MODE = 0x31,   // body: uint8_t mode(0 auto/1 manual)
-  SENS_TRIG     = 0x32    // optional details
-};
+  SENS_TRIG     = 0x32,   // optional details
+  SENS_GET_DAYNIGHT = 0x33  // query only the day/night state
+};;
 
 // ======================= Topology Ops =========================
 enum : uint8_t {
@@ -147,4 +148,13 @@ struct __attribute__((packed)) TempPayload {
   int16_t raw;       // optional raw ADC / sensor code (or 0 if N/A)
   uint8_t ok;        // 1=valid reading, 0=not available
   uint8_t src;       // sensor index/type at the module (freeform)
+};
+
+// Day/Night reply (used by SENS_GET_DAYNIGHT)
+// is_day: 1 = Day, 0 = Night
+struct __attribute__((packed)) DayNightPayload {
+  uint8_t is_day;   // 1=day, 0=night
+  uint8_t ok;       // 1=valid, 0=not available
+  uint16_t raw;     // optional raw ADC/photoresistor code (or 0 if N/A)
+  uint8_t src;      // sensor index/type at the module (freeform)
 };
