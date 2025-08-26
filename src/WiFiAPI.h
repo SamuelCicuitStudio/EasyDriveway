@@ -41,7 +41,11 @@
 #define API_PEER_PAIR       "/api/peer/pair"            // POST {mac,type}
 #define API_PEER_REMOVE     "/api/peer/remove"          // POST {mac}
 #define API_TOPOLOGY_SET    "/api/topology/set"         // POST {links:[...]}
-#define API_TOPOLOGY_GET    "/api/topology/get"         // GET
+#define API_TOPOLOGY_GET    "/api/topology/get"
+
+// ---------------- Sensors (JSON)
+#define API_SENSOR_DAYNIGHT "/api/sensor/daynight"   // POST {mac} -> {ok,is_day,updated_ms}
+         // GET
 
 // ---------------- Sequences (JSON — stubs) ----------------
 #define API_SEQUENCE_START  "/api/sequence/start"       // POST {start:"ENTRANCE|PARKING|mac|id", direction:"UP|DOWN"}

@@ -21,6 +21,7 @@
   const sleepSchedule = $('sleepSchedule'), sleepReset = $('sleepReset');
   const sleepLeft = $('sleepLeft'), sleepArmed = $('sleepArmed'), sleepWake = $('sleepWake');
 
+  
   // Logout
   const logoutBtn = $('logoutBtn');
 

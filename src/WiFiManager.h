@@ -74,6 +74,9 @@ private:
     void hWiFiScan(AsyncWebServerRequest* req);
 
     // peers / topology
+    void hSensorDayNight(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+
+    // peers / topology
     void hPeersList(AsyncWebServerRequest* req);
     void hPeerPair (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
     void hPeerRemove(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);

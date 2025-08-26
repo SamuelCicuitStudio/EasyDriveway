@@ -206,6 +206,8 @@ void WiFiManager::registerRoutes() {
       [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hCfgFactoryReset(r,d,l,i,t); });
 
     // ---------- Peers / Topology ----------
+    _server.on(API_SENSOR_DAYNIGHT,    HTTP_POST, nullptr, nullptr,
+      [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hSensorDayNight(r,d,l,i,t); });
     _server.on(API_PEERS_LIST,         HTTP_GET,  [this](AsyncWebServerRequest* r){ hPeersList(r); });
     _server.on(API_PEER_PAIR,          HTTP_POST, nullptr, nullptr,
       [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hPeerPair(r,d,l,i,t); });
@@ -471,6 +473,33 @@ void WiFiManager::hWiFiScan(AsyncWebServerRequest* req) {
     }
     _wifi->scanDelete();
     sendJSON(req, d);
+}
+
+
+void WiFiManager::hSensorDayNight(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total){
+    static String body; if (index == 0) body.clear();
+    body += String((char*)data).substring(0, len);
+    if (index + len < total) return;
+
+    DynamicJsonDocument d(512);
+    if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+    JsonVariantConst root = d.as<JsonVariantConst>();
+    const String mac = root.containsKey(J_MAC) ? String(root[J_MAC].as<const char*>()) : String();
+    if (!mac.length()) { sendError(req, "Missing mac"); return; }
+
+    bool requested = false;
+    if (_esn) requested = _esn->presenceGetDayNightByMac(mac);
+
+    uint32_t when = 0;
+    int8_t flag = _esn ? _esn->lastDayFlagByMac(mac, &when) : -1;
+
+    DynamicJsonDocument res(256);
+    res[J_OK] = true;
+    if (flag >= 0) res["is_day"] = (int)flag;
+    else res["is_day"] = -1;
+    res["updated_ms"] = when;
+    res["requested"]  = requested;
+    sendJSON(req, res);
 }
 
 /* ==================== Peers / Topology ==================== */

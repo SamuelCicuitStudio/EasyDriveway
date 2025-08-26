@@ -116,6 +116,8 @@ public:
   bool presenceGetStatus(uint8_t idx);
   bool presenceSetMode(uint8_t idx, uint8_t mode);
   bool presenceGetDayNight(uint8_t idx);  // send SENS_GET_DAYNIGHT
+  bool presenceGetDayNightByMac(const String& mac);
+  int8_t lastDayFlagByMac(const String& mac, uint32_t* outMs=nullptr) const;
   bool sensorSetMode(const String& mac, bool autoMode);    // via MAC
   bool sensorTestTrigger(const String& mac);               // SENS_TRIG (test)
 
@@ -275,6 +277,10 @@ private:
 
   float    _relTempC[ICM_MAX_RELAYS] = { NAN };
   uint32_t _relTempMs[ICM_MAX_RELAYS] = { 0 };
+
+  // entrance/parking day-night caches
+  int8_t   _entrDNFlag = -1; uint32_t _entrDNMs = 0;
+  int8_t   _parkDNFlag = -1; uint32_t _parkDNMs = 0;
 
   // user callbacks
   OnAckFn      _onAck = nullptr;

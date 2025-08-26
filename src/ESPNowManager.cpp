@@ -3,6 +3,10 @@
  *  File        : ESPNowManager.cpp (token- & topology-aware rewrite)
  **************************************************************/
 #include "ESPNowManager.h"
+#include "CommandAPI.h"
+
+// forward decl
+static inline bool decodeTempPayload(const uint8_t* p, int n, float& tCout);
 
 // ============ Static ===============
 ESPNowManager* ESPNowManager::s_inst = nullptr;
@@ -40,7 +44,8 @@ bool ESPNowManager::begin(uint8_t channelDefault, const char* pmk16) {
   _pwrTempC = NAN;
   _pwrTempMs = 0;
 
-  // Reset day/night caches
+    _entrDNFlag = -1; _entrDNMs = 0; _parkDNFlag = -1; _parkDNMs = 0;
+// Reset day/night caches
   for (size_t i = 0; i < ICM_MAX_SENSORS; ++i) {
     _sensDayNight[i] = -1;  // -1 = unknown
     _sensDNMs[i] = 0;       // last update ms
@@ -579,7 +584,6 @@ void ESPNowManager::freePending(int idx) {
   _pending[idx] = PendingTx{};  // zero out the slot
 }
 
-
 int ESPNowManager::findPendingForPeer(const uint8_t mac[6]) {
   for (int i=0;i<MAX_PENDING;i++)
     if (_pending[i].used && memcmp(_pending[i].mac,mac,6)==0)
@@ -672,6 +676,59 @@ bool ESPNowManager::relaySetMode(uint8_t idx, uint8_t ch, uint8_t mode){
 }
 bool ESPNowManager::presenceGetStatus(uint8_t idx){ return enqueueToPeer(&_sensors[idx],CmdDomain::SENS,SENS_GET,nullptr,0,true); }
 bool ESPNowManager::presenceGetDayNight(uint8_t idx){ return enqueueToPeer(&_sensors[idx],CmdDomain::SENS,SENS_GET_DAYNIGHT,nullptr,0,true); }
+
+bool ESPNowManager::presenceGetDayNightByMac(const String& macStr){
+  if (macStr.length() < 17) return false;
+
+  // Specials first: entrance / parking
+  String em = macBytesToStr(_entrance.mac);
+  if (_entrance.used && em.equalsIgnoreCase(macStr)) {
+    return enqueueToPeer(&_entrance, CmdDomain::SENS, SENS_GET_DAYNIGHT, nullptr, 0, true);
+  }
+  String pm = macBytesToStr(_parking.mac);
+  if (_parking.used && pm.equalsIgnoreCase(macStr)) {
+    return enqueueToPeer(&_parking, CmdDomain::SENS, SENS_GET_DAYNIGHT, nullptr, 0, true);
+  }
+
+  // Middle sensors
+  for (size_t i=0; i<ICM_MAX_SENSORS; ++i){
+    if (_sensors[i].used) {
+      String sm = macBytesToStr(_sensors[i].mac);
+      if (sm.equalsIgnoreCase(macStr)) {
+        return presenceGetDayNight((uint8_t)i);
+      }
+    }
+  }
+  return false;
+}
+int8_t ESPNowManager::lastDayFlagByMac(const String& macStr, uint32_t* outMs) const {
+  if (outMs) *outMs = 0;
+  if (macStr.length() < 17) return -1;
+
+  // Specials
+  String em = macBytesToStr(_entrance.mac);
+  if (_entrance.used && em.equalsIgnoreCase(macStr)) {
+    if (outMs) *outMs = _entrDNMs;
+    return _entrDNFlag;
+  }
+  String pm = macBytesToStr(_parking.mac);
+  if (_parking.used && pm.equalsIgnoreCase(macStr)) {
+    if (outMs) *outMs = _parkDNMs;
+    return _parkDNFlag;
+  }
+
+  // Middle sensors
+  for (size_t i=0; i<ICM_MAX_SENSORS; ++i){
+    if (_sensors[i].used) {
+      String sm = macBytesToStr(_sensors[i].mac);
+      if (sm.equalsIgnoreCase(macStr)) {
+        if (outMs) *outMs = _sensDNMs[i];
+        return _sensDayNight[i];
+      }
+    }
+  }
+  return -1;
+}
 bool ESPNowManager::presenceSetMode(uint8_t idx, uint8_t mode){
   PeerRec* pr=nullptr; if(!ensurePeer(ModuleType::PRESENCE,idx,pr)) return false;
   uint8_t b[1]={mode}; return enqueueToPeer(pr,CmdDomain::SENS,SENS_SET_MODE,b,1,true);
@@ -734,7 +791,6 @@ void ESPNowManager::handleAck(const uint8_t mac[6], const IcmMsgHdr& h, const ui
   freePending(pidx);
   pr->activeTx = -1;
 }
-
 void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
   if (len < (int)sizeof(IcmMsgHdr)) return;
   const IcmMsgHdr* h = (const IcmMsgHdr*)data;
@@ -783,9 +839,28 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
       break;
     }
 
-    case CmdDomain::SENS:
+    case CmdDomain::SENS: {
+      // Intercept day/night reply
+      if (h->op == SENS_GET_DAYNIGHT) {
+        if (plen >= (int)sizeof(DayNightPayload)) {
+          const DayNightPayload* dp = (const DayNightPayload*)payload;
+          int8_t flag = dp->ok ? (dp->is_day ? 1 : 0) : -1;
+          if (pr->type == ModuleType::PRESENCE) {
+            if (pr->index < ICM_MAX_SENSORS) {
+              _sensDayNight[pr->index] = flag;
+              _sensDNMs[pr->index] = millis();
+            } else {
+              // Specials: entrance or parking
+              if (memcmp(pr->mac, _entrance.mac, 6) == 0) { _entrDNFlag = flag; _entrDNMs = millis(); }
+              else if (memcmp(pr->mac, _parking.mac, 6) == 0) { _parkDNFlag = flag; _parkDNMs = millis(); }
+            }
+            LOGI(1602,"PRES[%u] daynight=%s", pr->index, (flag==1?"DAY":(flag==0?"NIGHT":"UNK")));
+          }
+        }
+      }
       if (_onPresence) _onPresence(mac, pr->index, payload, (size_t)plen);
       break;
+    }
 
     default:
       if (_onUnknown) _onUnknown(mac, *h, payload, (size_t)plen);

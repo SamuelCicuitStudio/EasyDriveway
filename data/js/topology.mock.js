@@ -187,7 +187,18 @@
       return respond({ ok:true, saved:true, count: cleaned.length });
     }
 
-    // ---- Relay test start/stop ----
+    
+
+    // ---- Sensor Day/Night ----
+    if (url.startsWith('/api/sensor/daynight') && method === 'POST') {
+      const mac = macFormatColon(body.mac||'');
+      // Deterministic pseudo-random based on MAC for demo
+      let hash = 0;
+      for (let i=0;i<mac.length;i++) hash = ((hash<<5)-hash) + mac.charCodeAt(i) | 0;
+      const is_day = (Math.abs(hash) % 2); // 0 or 1
+      return respond({ ok:true, is_day });
+    }
+// ---- Relay test start/stop ----
     if (url.startsWith('/api/sequence/start') && method === 'POST') {
       const start = macFormatColon(body.start||'');
       setSeqActive(true, start);

@@ -418,3 +418,19 @@ body::before{
 #app, .frame, .wrap {
   background-clip: padding-box;
 }
+
+
+/* Day/Night pill */
+.dn-pill{
+  display:inline-block; min-width:80px; text-align:center;
+  padding:6px 10px; border-radius:999px; border:1px solid #2a3a5d;
+  background:#0d1424; color:#e8eef7; font-weight:600; letter-spacing:.2px;
+}
+.dn-pill.day{
+  border-color:#1a584a;
+  background:linear-gradient(180deg, rgba(0,255,174,.14), rgba(11,19,35,.92));
+}
+.dn-pill.night{
+  border-color:#354171;
+  background:linear-gradient(180deg, rgba(100,181,255,.14), rgba(11,19,35,.92));
+}

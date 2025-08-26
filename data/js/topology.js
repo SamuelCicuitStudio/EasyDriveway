@@ -38,9 +38,20 @@
   const panelPower  = $('panelPower');
 
   const siSensStatus = $('siSensStatus');
+  const siDN = $('siDN');
   const siRelState = $('siRelState');
 
   const tOn = $('tOn'), tOff = $('tOff'), tRead = $('tRead');
+
+  // ---------- helper to render Day/Night pill ----------
+  function renderDayNight(isDay){
+    if (!siDN) return;
+    siDN.textContent = (isDay === 1) ? 'Day' : (isDay === 0) ? 'Night' : '—';
+    siDN.classList.remove('day', 'night');
+    if (isDay === 1) siDN.classList.add('day');
+    if (isDay === 0) siDN.classList.add('night');
+  }
+
   const pwrOn = $('pwrOn'), pwrOff = $('pwrOff');
 
   const logoutBtn = $('logoutBtn');
@@ -164,9 +175,10 @@
 
     panelSensor.hidden = panelRelay.hidden = panelPower.hidden = true;
 
-    if (kindUp === 'SENSOR'){
+    if (kindUp === 'SENSOR' || kindUp === 'ENTRANCE' || kindUp === 'PARKING'){ 
       panelSensor.hidden = false;
       setGauge($('gSensTemp'), 0, -20, 80, '°C');
+      if (typeof renderDayNight === 'function') renderDayNight(undefined);
     } else if (kindUp === 'RELAY'){
       panelRelay.hidden = false;
       setGauge($('gRelTemp'), 0, -20, 100, '°C');
@@ -575,10 +587,31 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
     siRelState.textContent = 'OFF';
     setGauge($('gRelTemp'), 25 + Math.random()*5, -20, 100, '°C');
   }
+
+
+  // ---------- API: day/night ----------
+  async function readDayNight(peerLike){
+    const mac = macFormatColon(peerLike?.mac || '');
+    if (!macIsCompleteColon(mac)) { renderDayNight(undefined); return; }
+    try{
+      const r = await fetch('/api/sensor/daynight', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ mac })
+      });
+      if (!r.ok) throw new Error('dn read failed');
+      const j = await r.json(); // expect { ok:true, is_day:0|1 }
+      const isDay = (j && typeof j.is_day === 'number') ? (j.is_day ? 1 : 0) : undefined;
+      renderDayNight(isDay);
+    }catch(e){
+      renderDayNight(undefined);
+    }
+  }
+
   async function readSensor(peerLike){
     showToast('Sensor read requested');
     siSensStatus.textContent = 'OK';
     setGauge($('gSensTemp'), 20 + Math.floor(Math.random()*10), -20, 80, '°C');
+  await readDayNight(peerLike);
   }
   async function powerControl(on){
     showToast(on ? 'Power ON' : 'Power OFF');
@@ -612,7 +645,7 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
       const b = bricks.find(x => x.id === selectedId);
       if (b) target = peers.find(pp => macEqual(pp.mac||'', b.mac||''));
     }
-    if (!target && selectedPeer && String(selectedPeer.type).toLowerCase()==='sensor') {
+    if (!target && selectedPeer && ['sensor','entrance','parking'].includes(String(selectedPeer.type).toLowerCase())) {
       target = selectedPeer;
     }
     readSensor(target || {});
