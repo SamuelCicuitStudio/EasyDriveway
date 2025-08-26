@@ -39,7 +39,8 @@ enum : uint8_t {
   SYS_HB        = 0x03,   // heartbeat
   SYS_CAPS      = 0x04,   // capabilities blob
   SYS_MODE      = 0x05,   // set mode: 0=auto,1=manual
-  SYS_PING      = 0x06    // echo
+  SYS_PING      = 0x06,    // echo
+  SYS_SET_CH = 0x07   // NEW: tell node to switch ESP-NOW channel
 };
 
 // ======================= Power Ops ============================
@@ -157,4 +158,11 @@ struct __attribute__((packed)) DayNightPayload {
   uint8_t ok;       // 1=valid, 0=not available
   uint16_t raw;     // optional raw ADC/photoresistor code (or 0 if N/A)
   uint8_t src;      // sensor index/type at the module (freeform)
+};
+
+struct __attribute__((packed)) SysSetChPayload {
+  uint8_t  new_ch;        // 1..13
+  uint8_t  window_s;      // grace window after switchover_ts (seconds)
+  uint16_t rsv;           // align
+  uint32_t switchover_ts; // UNIX time when node should switch
 };

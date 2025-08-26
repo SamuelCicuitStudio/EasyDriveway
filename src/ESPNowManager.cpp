@@ -1188,3 +1188,30 @@ static inline bool decodeTempPayload(const uint8_t* p, int n, float& tCout) {
   tCout = ((float)tp->tC_x100) / 100.0f;
   return true;
 }
+
+bool ESPNowManager::orchestrateChannelChange(uint8_t newCh, uint8_t delay_s, uint8_t window_s, bool persist) {
+  if (newCh < 1 || newCh > 13) return false;
+
+  // 1) Build payload
+  SysSetChPayload p{};
+  p.new_ch = newCh;
+  p.window_s = window_s;
+  uint32_t nowTs = _rtc ? (uint32_t)_rtc->getUnixTime() : (uint32_t)time(nullptr);
+  p.switchover_ts = nowTs + delay_s;
+
+  // 2) Send to all peers with ACK (reuse your enqueueToPeer() patterns)
+  bool ok = true;
+  auto sendAll=[&](PeerRec& pr){
+    if (!pr.used) return;
+    ok &= enqueueToPeer(&pr, CmdDomain::SYS, SYS_SET_CH, (const uint8_t*)&p, sizeof(p), true);
+  };
+  sendAll(_power);  sendAll(_entrance); sendAll(_parking);
+  for (size_t i=0;i<ICM_MAX_RELAYS;i++)  sendAll(_relays[i]);
+  for (size_t i=0;i<ICM_MAX_SENSORS;i++) sendAll(_sensors[i]);
+
+  // 3) Wait until switchover time, then switch locally and re-add peers
+  // (Call this from loop() or a task: check time and then do:)
+  // if (time(nullptr) >= p.switchover_ts + 1) setChannel(newCh, persist);
+
+  return ok;
+}

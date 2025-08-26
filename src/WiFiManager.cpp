@@ -285,71 +285,81 @@ void WiFiManager::handleThanks(AsyncWebServerRequest* request) {
 
 /* ==================== Config ==================== */
 void WiFiManager::hCfgLoad(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(1024);
-    d[J_AP_SSID] = _cfg ? _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT)
-                        : String(DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
-    d[J_AP_PSK]  = _cfg ? _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT)
-                        : String(DEVICE_AP_AUTH_PASS_DEFAULT);
-    d[J_ESN_CH]  = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+  DynamicJsonDocument d(1024);
 
-    JsonObject net = d.createNestedObject("net");
-    if (_apOn) {
-        net[J_MODE] = "AP";
-        net["ip"]   = _wifi->softAPIP().toString();
-        net["ch"]   = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
-    } else if (_wifi->status() == WL_CONNECTED) {
-        net[J_MODE] = "STA";
-        net["ip"]   = _wifi->localIP().toString();
-        net["ch"]   = _wifi->channel();
-        net["rssi"] = _wifi->RSSI();
-    } else {
-        net[J_MODE] = "OFF";
-    }
+  // ---- STA (wifi.html form expects these) ----
+  d[J_WIFI_SSID] = _cfg ? _cfg->GetString(WIFI_STA_SSID_KEY, WIFI_STA_SSID_DEFAULT)
+                        : String(WIFI_STA_SSID_DEFAULT);
+  d[J_WIFI_PSK]  = _cfg ? _cfg->GetString(WIFI_STA_PASS_KEY, WIFI_STA_PASS_DEFAULT)
+                        : String(WIFI_STA_PASS_DEFAULT);
 
-    sendJSON(req, d);
+  // ---- AP (existing) ----
+  d[J_AP_SSID] = _cfg ? _cfg->GetString(DEVICE_WIFI_HOTSPOT_NAME_KEY, DEVICE_WIFI_HOTSPOT_NAME_DEFAULT)
+                      : String(DEVICE_WIFI_HOTSPOT_NAME_DEFAULT);
+  d[J_AP_PSK]  = _cfg ? _cfg->GetString(DEVICE_AP_AUTH_PASS_KEY,      DEVICE_AP_AUTH_PASS_DEFAULT)
+                      : String(DEVICE_AP_AUTH_PASS_DEFAULT);
+
+  // ---- ESP-NOW channel (existing) ----
+  d[J_ESN_CH]  = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+
+  // ---- BLE (wifi.html form expects these) ----
+  d[J_BLE_NAME] = _cfg ? _cfg->GetString(DEVICE_BLE_NAME_KEY, DEVICE_BLE_NAME_DEFAULT)
+                       : String(DEVICE_BLE_NAME_DEFAULT);
+  d[J_BLE_PASS] = _cfg ? _cfg->GetInt(DEVICE_BLE_AUTH_PASS_KEY, DEVICE_BLE_AUTH_PASS_DEFAULT)
+                       : DEVICE_BLE_AUTH_PASS_DEFAULT;
+
+  // ---- Read-only network status card (existing shape) ----
+  JsonObject net = d.createNestedObject("net");
+  if (_apOn) {
+    net[J_MODE] = "AP";
+    net["ip"]   = _wifi ? _wifi->softAPIP().toString() : String();
+    net["ch"]   = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
+  } else if (_wifi && _wifi->status() == WL_CONNECTED) {
+    net[J_MODE] = "STA";
+    net["ip"]   = _wifi->localIP().toString();
+    net["ch"]   = _wifi->channel();
+    net["rssi"] = _wifi->RSSI();
+  } else {
+    net[J_MODE] = "OFF";
+  }
+
+  sendJSON(req, d);
 }
 
 void WiFiManager::hCfgSave(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-    static String body; if (index == 0) body.clear();
-    body += String((char*)data).substring(0, len);
-    if (index + len < total) return;
+  static String body; if (index == 0) body.clear();
+  body += String((char*)data).substring(0, len);
+  if (index + len < total) return;
 
-    DynamicJsonDocument d(2048);
-    if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
-    JsonVariantConst root = d.as<JsonVariantConst>();
+  DynamicJsonDocument d(2048);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  JsonVariantConst root = d.as<JsonVariantConst>();
+  if (root.isNull()) { sendError(req, "Empty JSON"); return; }
 
-    if (!root.isNull() && root.containsKey(J_AP_SSID)) _cfg->PutString(DEVICE_WIFI_HOTSPOT_NAME_KEY, root[J_AP_SSID].as<const char*>());
-    if (!root.isNull() && root.containsKey(J_AP_PSK))  _cfg->PutString(DEVICE_AP_AUTH_PASS_KEY,      root[J_AP_PSK].as<const char*>());
-    if (!root.isNull() && root.containsKey(J_BLE_NAME))_cfg->PutString(DEVICE_BLE_NAME_KEY,          root[J_BLE_NAME].as<const char*>());
-    if (!root.isNull() && root.containsKey(J_BLE_PASS))_cfg->PutInt   (DEVICE_BLE_AUTH_PASS_KEY,     root[J_BLE_PASS].as<int>());
+  // ---- AP ----
+  if (root.containsKey(J_AP_SSID)) _cfg->PutString(DEVICE_WIFI_HOTSPOT_NAME_KEY, root[J_AP_SSID].as<const char*>());
+  if (root.containsKey(J_AP_PSK))  _cfg->PutString(DEVICE_AP_AUTH_PASS_KEY,      root[J_AP_PSK].as<const char*>());
 
-    if (!root.isNull() && root.containsKey(J_ESN_CH)) {
-        int ch = root[J_ESN_CH].as<int>();
-        if (ch >= 1 && ch <= 13) {
-            _cfg->PutInt(ESPNOW_CH_KEY, ch);
-            if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
-        }
+  // ---- BLE ----
+  if (root.containsKey(J_BLE_NAME)) _cfg->PutString(DEVICE_BLE_NAME_KEY,      root[J_BLE_NAME].as<const char*>());
+  if (root.containsKey(J_BLE_PASS)) _cfg->PutInt   (DEVICE_BLE_AUTH_PASS_KEY, root[J_BLE_PASS].as<int>());
+
+  // ---- ESP-NOW channel (validate 1..13) ----
+  if (root.containsKey(J_ESN_CH)) {
+    int ch = root[J_ESN_CH].as<int>();
+    if (ch >= 1 && ch <= 13) {
+      _cfg->PutInt(ESPNOW_CH_KEY, ch);
+      // If currently in AP, keep ESP-NOW aligned immediately (optional, keeps live preview right)
+      if (_apOn && _esn) _esn->setChannel((uint8_t)ch);
     }
+  }
 
-    // optional STA creds to connect now
-    if (!root.isNull() && root.containsKey(J_WIFI_SSID) && root.containsKey(J_WIFI_PSK)) {
-        String ssid = root[J_WIFI_SSID].as<String>();
-        String psk  = root[J_WIFI_PSK].as<String>();
-        _wifi->mode(WIFI_STA);
-        _wifi->persistent(true);
-        _wifi->disconnect(true);
-        delay(50);
-        _wifi->begin(ssid.c_str(), psk.c_str());
+  // ---- STA (save only; DO NOT connect here) ----
+  if (root.containsKey(J_WIFI_SSID)) _cfg->PutString(WIFI_STA_SSID_KEY, root[J_WIFI_SSID].as<const char*>());
+  if (root.containsKey(J_WIFI_PSK))  _cfg->PutString(WIFI_STA_PASS_KEY, root[J_WIFI_PSK].as<const char*>());
 
-        uint32_t start = millis();
-        while (_wifi->status() != WL_CONNECTED && millis() - start < 15000) delay(100);
-        if (_wifi->status() == WL_CONNECTED) {
-            _apOn = false;
-            alignESPNOWToCurrentChannel();
-        }
-    }
-
-    sendOK(req);
+  // No immediate STA connect: wifi.html is a setup page.
+  sendOK(req);
 }
 
 void WiFiManager::hCfgExport(AsyncWebServerRequest* req) {

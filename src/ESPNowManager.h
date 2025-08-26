@@ -132,6 +132,8 @@ public:
   bool topoPushRelay(uint8_t relayIdx);
   bool topoPushSensor(uint8_t sensIdx);
   bool topoPushAll();
+  bool orchestrateChannelChange(uint8_t newCh, uint8_t delay_s=2, uint8_t window_s=2, bool persist=true);
+
 
   // (6) Sequence
   bool sequenceStart(SeqDir dir);
