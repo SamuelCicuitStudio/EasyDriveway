@@ -40,7 +40,7 @@ enum : uint8_t {
   SYS_CAPS      = 0x04,   // capabilities blob
   SYS_MODE      = 0x05,   // set mode: 0=auto,1=manual
   SYS_PING      = 0x06,    // echo
-  SYS_SET_CH = 0x07   // NEW: tell node to switch ESP-NOW channel
+  SYS_SET_CH    = 0x07   // NEW: tell node to switch ESP-NOW channel
 };
 
 // ======================= Power Ops ============================
