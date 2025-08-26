@@ -66,6 +66,10 @@
 
 #define ESPNOW_CH_DEFAULT           1
 #define ESPNOW_MD_DEFAULT           0U
+
+// 2.5 System Topology
+#define SYS_TOPOLOGY_KEY     "TOPOLJ"
+#define SYS_TOPOLOGY_DEFAULT "{}"
 // ============================================================================
 // [3] Timekeeping & Security (NVS keys ≤ 6 chars)
 // ============================================================================

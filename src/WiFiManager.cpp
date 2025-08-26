@@ -18,17 +18,6 @@ static String isoFromRTC(RTCManager* rtc) {
   return rtc->iso8601String();  // "YYYY-MM-DDTHH:MM:SS" (UTC by design) 
 }
 
-// Small helper to stringify CoolingManager::Mode safely
-static const char* coolModeToStr(CoolingManager::Mode m) {
-  switch (m) {
-    case CoolingManager::COOL_STOPPED: return "STOPPED";
-    case CoolingManager::COOL_ECO:     return "ECO";
-    case CoolingManager::COOL_NORMAL:  return "NORMAL";
-    case CoolingManager::COOL_FORCED:  return "FORCED";
-    case CoolingManager::COOL_AUTO:    return "AUTO";
-    default:                           return "UNKNOWN";
-  }
-}
 
 static String isoFromSystemClock() {
   time_t now = time(nullptr);
@@ -516,10 +505,21 @@ void WiFiManager::hSensorDayNight(AsyncWebServerRequest* req, uint8_t* data, siz
 
 /* ==================== Peers / Topology ==================== */
 void WiFiManager::hPeersList(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(8192);
-    String peers = _esn ? _esn->serializePeers() : "{}";
-    if (!deserializeJson(d, peers)) sendJSON(req, d);
-    else sendError(req, "Peers serialization error", 500);
+  DynamicJsonDocument in(8192);
+  String src = _esn ? _esn->serializePeers() : "{}";
+  if (deserializeJson(in, src)) { sendError(req, "Peers serialization error", 500); return; }
+
+  DynamicJsonDocument out(8192);
+  JsonVariantConst root = in.as<JsonVariantConst>();
+  if (root.is<JsonArrayConst>()) {
+    // If serializePeers() returned a bare array, wrap it
+    out["peers"] = root;
+  } else if (!root.isNull() && root.containsKey("peers")) {
+    out["peers"] = root["peers"];
+  } else {
+    out.createNestedArray("peers"); // empty
+  }
+  sendJSON(req, out);
 }
 
 void WiFiManager::hPeerPair(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
@@ -766,8 +766,21 @@ bool WiFiManager::applyExportedConfig(const JsonVariantConst& cfgObj) {
 }
 
 // ---- WiFiManager.cpp — complete hSysStatus(.) ----
+// ---- WiFiManager.cpp — complete hSysStatus(.) ----
 void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  // Helper: stringify CoolingManager::Mode
+  auto modeToStr = [](CoolingManager::Mode m) -> const char* {
+    switch (m) {
+      case CoolingManager::COOL_STOPPED: return "STOPPED";
+      case CoolingManager::COOL_ECO:     return "ECO";
+      case CoolingManager::COOL_NORMAL:  return "NORMAL";
+      case CoolingManager::COOL_FORCED:  return "FORCED";
+      case CoolingManager::COOL_AUTO:    return "AUTO";
+      default:                           return "UNKNOWN";
+    }
+  };
 
   DynamicJsonDocument d(2048);
 
@@ -795,28 +808,29 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   // ----- Power + Health (basic values that the UI expects)
   {
     JsonObject power = d.createNestedObject("power");
-    power["source"] = "WALL";     // or "BATTERY" if you can detect it
+    power["source"] = "WALL";     // change to "BATTERY" if you can detect it
     power["ok"]     = true;
     power["detail"] = "nominal";
+
     JsonObject health = d.createNestedObject("health");
-    health.createNestedArray("faults"); // empty list → “No faults” in UI
+    health.createNestedArray("faults"); // empty → “No faults” in UI
   }
 
   // ----- Time: prefer RTC; fall back to system clock
   {
     JsonObject t = d.createNestedObject("time");
-  
     bool haveRTC = false;
-    RTCManager* _rtc = (_esn ? _esn->rtc() : nullptr);
-    if (_rtc && !_rtc->lostPower()) {                 // RTC ok
-      t["iso"] = isoFromRTC(_rtc);                    // "YYYY-MM-DDTHH:MM:SSZ"/UTC-like
-      bool ok=false;
-      float trtc = _rtc->readTemperatureC(&ok);       // DS3231 die temperature
-      if (ok && isfinite(trtc)) t["tempC"] = trtc;
+
+    RTCManager* rtcMgr = (_esn ? _esn->rtc() : nullptr);
+    if (rtcMgr && !rtcMgr->lostPower()) {
+      t["iso"] = isoFromRTC(rtcMgr);                       // "YYYY-MM-DDTHH:MM:SSZ"
+      bool tok = false;
+      float trtc = rtcMgr->readTemperatureC(&tok);         // DS3231 die temperature
+      if (tok && isfinite(trtc)) t["tempC"] = trtc;
       haveRTC = true;
     }
     if (!haveRTC) {
-      t["iso"] = isoFromSystemClock();                // "unsynced" or ISO from system
+      t["iso"] = isoFromSystemClock();                     // system time formatted
     }
   }
 
@@ -831,14 +845,14 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   {
     JsonObject c = d.createNestedObject("cooling");
     if (_cool) {
-      float tc = _cool->lastTempC();
+      const float tc = _cool->lastTempC();
       if (!isnan(tc)) c["tempC"] = tc;
-      c["speedPct"]    = (int)_cool->lastSpeedPct();
-      c["modeApplied"] = coolModeToStr(_cool->modeApplied());
-      c["modeRequested"] = coolModeToStr(_cool->modeRequested());
+      c["speedPct"]      = (int)_cool->lastSpeedPct();
+      c["modeApplied"]   = modeToStr(_cool->modeApplied());
+      c["modeRequested"] = modeToStr(_cool->modeRequested());
     } else {
       c["modeApplied"] = "STOPPED";
-      c["speedPct"] = 0;
+      c["speedPct"]    = 0;
     }
   }
 
@@ -846,22 +860,21 @@ void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   if (_slp) {
     JsonObject s = d.createNestedObject("sleep");
 
-    // If you don't store a configured timeout, approximate it so UI input shows something:
-    long secsLeft = _slp->secondsUntilSleep();              // negative => due/armed
+    const long secsLeft = _slp->secondsUntilSleep();  // negative => due/armed
     uint32_t timeoutSec = 0;
     if (secsLeft >= 0) {
       const uint32_t now  = _slp->nowEpoch();
       const uint32_t last = _slp->lastActivityEpoch();
       timeoutSec = (uint32_t)secsLeft + (now - last);
     }
-    s["timeout_sec"]         = timeoutSec;                  // UI uses this to prefill
+    s["timeout_sec"]         = timeoutSec;            // used to prefill input
     s["secs_to_sleep"]       = (int32_t)secsLeft;
     s["last_activity_epoch"] = _slp->lastActivityEpoch();
-    s["next_wake_epoch"]     = _slp->nextWakeEpoch();       // UI formats to human time
+    s["next_wake_epoch"]     = _slp->nextWakeEpoch();
     s["armed"]               = _slp->isArmed();
   }
 
-  // Fire it off (JSON + no-cache), no custom AsyncWebServerResponse plumbing needed.
+  // JSON + content-type via helper; no AsyncWebServerResponse::print used.
   sendJSON(req, d);
 }
 

@@ -168,8 +168,8 @@ public:
   uint32_t lastSensorDayFlagUpdateMs(uint8_t idx) const { return (idx < ICM_MAX_SENSORS) ? _sensDNMs[idx] : 0; }
 private:
   // ---------- NVS keys (<= 6 chars each) ----------
-  String keyMd() const   { return String("ESMODE"); }  // system mode
-  String keyCh() const   { return String("ESCHNL"); }  // channel
+  String keyMd() const   { return ESPNOW_MD_KEY; }  // system mode
+  String keyCh() const   { return ESPNOW_CH_KEY; }  // channel
   String keyTok(ModuleType t, uint8_t index);          // <=6
   String keyMac(ModuleType t, uint8_t index);          // <=6
   String keyTopo() const { return String("TOPOLJ"); }  // topology JSON blob

@@ -1047,7 +1047,7 @@ bool ESPNowManager::saveTopologyToNvs() const {
 }
 
 bool ESPNowManager::loadTopologyFromNvs() {
-  String j = _cfg->GetString(keyTopo().c_str(), "");
+  String j = _cfg->GetString(SYS_TOPOLOGY_KEY, SYS_TOPOLOGY_DEFAULT);
   if (j.isEmpty()) return true;
   DynamicJsonDocument doc(4096);
   DeserializationError err = deserializeJson(doc, j);

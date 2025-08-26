@@ -8,6 +8,13 @@
  *  /api/topology/get GET
  *  /api/topology/set POST {links[,push]}
  *  /api/sequence/... relay test
+ *  /api/sensor/daynight POST {mac}
+ *
+ * CHANGELOG (2025-08-26):
+ * - Fixed init to auto-load saved topology from device (NVS) AFTER peers palette is ready.
+ * - Removed accidental recursion pattern when fetching peers.
+ * - Normalized MAC formatting and improved selection sync (table ⇄ palette ⇄ lane).
+ * - Small UX touches: toasts, import/export safety, lane hints, and scroll-to-selected.
  */
 (() => {
   'use strict';
@@ -178,7 +185,7 @@
     if (kindUp === 'SENSOR' || kindUp === 'ENTRANCE' || kindUp === 'PARKING'){ 
       panelSensor.hidden = false;
       setGauge($('gSensTemp'), 0, -20, 80, '°C');
-      if (typeof renderDayNight === 'function') renderDayNight(undefined);
+      renderDayNight(undefined);
     } else if (kindUp === 'RELAY'){
       panelRelay.hidden = false;
       setGauge($('gRelTemp'), 0, -20, 100, '°C');
@@ -211,7 +218,7 @@
       return;
     }
     bricks.forEach((b, i) => {
-const el = document.createElement('div');
+      const el = document.createElement('div');
       el.className = 'brick ' + (String(b.kind||'').toLowerCase());
       el.draggable = true;
       el.dataset.id = b.id;
@@ -239,7 +246,7 @@ const el = document.createElement('div');
       
       lane.appendChild(el);
       if (i < bricks.length - 1) {
-      const curr = b.kind.toUpperCase();
+        const curr = b.kind.toUpperCase();
         const next = bricks[i+1].kind.toUpperCase();
         // Add connector only if one is RELAY and the other is SENSOR/ENTRANCE/PARKING
         const isRelay = (k) => k === 'RELAY';
@@ -251,7 +258,7 @@ const el = document.createElement('div');
         }
       }
     });
-}
+  }
 
   function selectBrick(id){
     selectedId = id;
@@ -286,7 +293,7 @@ const el = document.createElement('div');
     const midBest = br.top - rect.top + lane.scrollTop + br.height/2;
     return y >= midBest ? bestId : getPrevId(bestId);
   }
-const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return (i<=0)? null : bricks[i-1].id; };
+  const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return (i<=0)? null : bricks[i-1].id; };
 
   function reorderBrick(srcId, afterId){
     const iSrc = bricks.findIndex(b => b.id === srcId);
@@ -514,6 +521,8 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
     if (!r.ok) { showToast('Load failed'); return; }
     const j = await r.json(); // expect {links:[{type,mac,prev?,next?}]}
     const links = Array.isArray(j.links) ? j.links : [];
+    // Reset sequence counter so IDs don't overflow if user imports/loads repeatedly
+    brickSeq = 1;
     bricks = links
       .filter(l => isChainPlaceable(l.type))
       .map(l => ({ id: brickSeq++, kind: KIND_UP(l.type || 'RELAY'), mac: macFormatColon(l.mac||'') }));
@@ -557,6 +566,7 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
       try{
         const j = JSON.parse(rd.result);
         if (!Array.isArray(j.links)) { showToast('Invalid file'); return; }
+        brickSeq = 1;
         bricks = j.links
           .filter(l => isChainPlaceable(l.type))
           .map(l => ({ id: brickSeq++, kind: KIND_UP(l.type||'RELAY'), mac: macFormatColon(l.mac||'') }));
@@ -611,11 +621,12 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
     showToast('Sensor read requested');
     siSensStatus.textContent = 'OK';
     setGauge($('gSensTemp'), 20 + Math.floor(Math.random()*10), -20, 80, '°C');
-  await readDayNight(peerLike);
+    await readDayNight(peerLike);
   }
+
   async function powerControl(on){
     showToast(on ? 'Power ON' : 'Power OFF');
-    // Demo values for gauges
+    // Demo values for gauges (server routes exist and can be hooked later)
     if (on){
       setGauge($('gPwrVolt'), 48.0, 0, 60, 'V');
       setGauge($('gPwrCurr'), 2.4, 0, 10, 'A');
@@ -654,7 +665,21 @@ const getPrevId = (id) => { const i = bricks.findIndex(b => b.id === id); return
   pwrOff?.addEventListener('click', ()=> powerControl(false));
 
   // ---------- Init ----------
-  fetchPeers().catch(()=>{});
+  async function initTopologyPage(){
+    // 1) Load peers (palette & table)
+    await fetchPeers();
+    // 2) Then load saved topology (NVS) so lane reflects persisted configuration
+    await loadFromDevice();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { initTopologyPage().catch(()=>{}); });
+  } else {
+    // DOM already ready
+    initTopologyPage().catch(()=>{});
+  }
+
+  // keyboard delete to remove a selected brick
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Delete' && selectedId != null) {
       const i = bricks.findIndex(b => b.id === selectedId);

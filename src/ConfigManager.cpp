@@ -343,6 +343,8 @@ void ConfigManager::initializeVariables() {
     PutString(WEB_USER_KEY, WEB_USER_DEFAULT);
     PutString(WEB_PASS_KEY, WEB_PASS_DEFAULT);
 
+    PutString(SYS_TOPOLOGY_KEY,    SYS_TOPOLOGY_DEFAULT);
+
 }
 
 /**
