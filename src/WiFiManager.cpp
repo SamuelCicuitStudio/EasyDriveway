@@ -18,6 +18,18 @@ static String isoFromRTC(RTCManager* rtc) {
   return rtc->iso8601String();  // "YYYY-MM-DDTHH:MM:SS" (UTC by design) 
 }
 
+// Small helper to stringify CoolingManager::Mode safely
+static const char* coolModeToStr(CoolingManager::Mode m) {
+  switch (m) {
+    case CoolingManager::COOL_STOPPED: return "STOPPED";
+    case CoolingManager::COOL_ECO:     return "ECO";
+    case CoolingManager::COOL_NORMAL:  return "NORMAL";
+    case CoolingManager::COOL_FORCED:  return "FORCED";
+    case CoolingManager::COOL_AUTO:    return "AUTO";
+    default:                           return "UNKNOWN";
+  }
+}
+
 static String isoFromSystemClock() {
   time_t now = time(nullptr);
   if (now <= 0) return String("unsynced");
@@ -753,112 +765,103 @@ bool WiFiManager::applyExportedConfig(const JsonVariantConst& cfgObj) {
     return ok;
 }
 
-// ---- WiFiManager.cpp — inside hSysStatus(...) ----
+// ---- WiFiManager.cpp — complete hSysStatus(.) ----
 void WiFiManager::hSysStatus(AsyncWebServerRequest* req) {
   if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
 
-  DynamicJsonDocument d(1024);
+  DynamicJsonDocument d(2048);
 
-  // ----- Mode (AUTO / MANUAL) -----
-  int md = _cfg ? _cfg->GetInt(ESPNOW_MD_KEY, ESPNOW_MD_DEFAULT) : 0;
+  // ----- Mode (AUTO / MANUAL) as a simple string for home.js
+  const int md = _cfg ? _cfg->GetInt(ESPNOW_MD_KEY, ESPNOW_MD_DEFAULT) : ESPNOW_MD_DEFAULT;
   d["mode"] = (md == 1) ? "MANUAL" : "AUTO";
 
-  // ----- Wi-Fi quick summary -----
+  // ----- Wi-Fi summary (mode/ip/ch/rssi)
   {
     JsonObject wifi = d.createNestedObject("wifi");
     if (_apOn) {
       wifi["mode"] = "AP";
-      wifi["ip"]   = _wifi->softAPIP().toString();
+      wifi["ip"]   = _wifi ? _wifi->softAPIP().toString() : String();
       wifi["ch"]   = _cfg ? _cfg->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT) : ESPNOW_CH_DEFAULT;
-    } else if (_wifi->status() == WL_CONNECTED) {
+    } else if (_wifi && _wifi->status() == WL_CONNECTED) {
       wifi["mode"] = "STA";
       wifi["ip"]   = _wifi->localIP().toString();
-      wifi["rssi"] = _wifi->RSSI();
       wifi["ch"]   = _wifi->channel();
+      wifi["rssi"] = _wifi->RSSI();
     } else {
       wifi["mode"] = "OFF";
     }
   }
 
-  // ----- Power (stub unless you have real source) -----
+  // ----- Power + Health (basic values that the UI expects)
   {
     JsonObject power = d.createNestedObject("power");
-    bool onBattery = _cfg ? _cfg->GetBool("PW_BAT", false) : false; // optional flag in NVS
-    power["source"] = onBattery ? "BATTERY" : "WALL";
+    power["source"] = "WALL";     // or "BATTERY" if you can detect it
     power["ok"]     = true;
     power["detail"] = "nominal";
-  }
-
-  // ----- Health / faults (fill from managers if you have them) -----
-  {
     JsonObject health = d.createNestedObject("health");
-    JsonArray faults  = health.createNestedArray("faults");
-    bool okHealth = true;
-    // examples:
-    // if (RTCManager* rtc = (_esn ? _esn->rtc() : nullptr); rtc && rtc->lostPower()) { faults.add("RTC lost power"); okHealth = false; }
-    // if (_cool && _cool->fault()) { faults.add("Cooling fault"); okHealth = false; }
-    health["ok"] = okHealth;
+    health.createNestedArray("faults"); // empty list → “No faults” in UI
   }
 
-  // ----- Buzzer state (from NVS) -----
-  d["buzzer_enabled"] = _cfg ? _cfg->GetBool(BUZZER_FEEDBACK_KEY, BUZZER_FEEDBACK_DEFAULT) : BUZZER_FEEDBACK_DEFAULT;
-
-  // ----- Time (RTC first, system clock fallback) -----
+  // ----- Time: prefer RTC; fall back to system clock
   {
-    RTCManager* rtc = (_esn ? _esn->rtc() : nullptr);
-    JsonObject jtime = d.createNestedObject("time");
-    if (rtc) {
-      jtime["iso"]        = isoFromRTC(rtc);
-      jtime["date"]       = rtc->dateString();
-      jtime["time"]       = rtc->timeString();
-      jtime["lost_power"] = rtc->lostPower();
-      bool okT=false; float tc = rtc->readTemperatureC(&okT);
-      if (okT) jtime["tempC"] = tc;       // RTC’s on-die temperature (°C)
-    } else {
-      jtime["iso"]        = isoFromSystemClock();
-      jtime["lost_power"] = true;         // unknown/not active
+    JsonObject t = d.createNestedObject("time");
+  
+    bool haveRTC = false;
+    RTCManager* _rtc = (_esn ? _esn->rtc() : nullptr);
+    if (_rtc && !_rtc->lostPower()) {                 // RTC ok
+      t["iso"] = isoFromRTC(_rtc);                    // "YYYY-MM-DDTHH:MM:SSZ"/UTC-like
+      bool ok=false;
+      float trtc = _rtc->readTemperatureC(&ok);       // DS3231 die temperature
+      if (ok && isfinite(trtc)) t["tempC"] = trtc;
+      haveRTC = true;
+    }
+    if (!haveRTC) {
+      t["iso"] = isoFromSystemClock();                // "unsynced" or ISO from system
     }
   }
 
-  // ----- Uptime -----
+  // ----- Uptime
   d["uptime_ms"] = (uint32_t)millis();
 
-  // ---- Cooling snapshot (if present) ----
-  if (_cool) {
-    JsonObject c = d.createNestedObject("cooling");
-    float t = _cool->lastTempC();
-    if (!isnan(t)) c["tempC"] = t;              // module temperature (°C) from CoolingManager
-    c["speedPct"]    = _cool->lastSpeedPct();
+  // ----- Buzzer toggle
+  d["buzzer_enabled"] = _cfg ? _cfg->GetBool(BUZZER_FEEDBACK_KEY, BUZZER_FEEDBACK_DEFAULT)
+                             : BUZZER_FEEDBACK_DEFAULT;
 
-    const auto ma = _cool->modeApplied();
-    const auto mr = _cool->modeRequested();
-    auto modeToStr = [](CoolingManager::Mode m)->const char*{
-      switch(m){
-        case CoolingManager::COOL_STOPPED: return "STOPPED";
-        case CoolingManager::COOL_ECO:     return "ECO";
-        case CoolingManager::COOL_NORMAL:  return "NORMAL";
-        case CoolingManager::COOL_FORCED:  return "FORCED";
-        case CoolingManager::COOL_AUTO:    return "AUTO";
-        default: return "UNKNOWN";
-      }
-    };
-    c["modeApplied"]   = modeToStr(ma);
-    c["modeRequested"] = modeToStr(mr);
+  // ----- Cooling snapshot
+  {
+    JsonObject c = d.createNestedObject("cooling");
+    if (_cool) {
+      float tc = _cool->lastTempC();
+      if (!isnan(tc)) c["tempC"] = tc;
+      c["speedPct"]    = (int)_cool->lastSpeedPct();
+      c["modeApplied"] = coolModeToStr(_cool->modeApplied());
+      c["modeRequested"] = coolModeToStr(_cool->modeRequested());
+    } else {
+      c["modeApplied"] = "STOPPED";
+      c["speedPct"] = 0;
+    }
   }
 
-  // ---- Sleep snapshot (if present) ----
+  // ----- Sleep / inactivity
   if (_slp) {
     JsonObject s = d.createNestedObject("sleep");
-    // If you store a configured timeout separately, emit that here instead.
-    s["timeout_sec"]         = _slp->secondsUntilSleep() >= 0
-                               ? (uint32_t)(_slp->secondsUntilSleep() + (uint32_t)(_slp->nowEpoch() - _slp->lastActivityEpoch()))
-                               : 0;
-    s["secs_to_sleep"]       = _slp->secondsUntilSleep();
+
+    // If you don't store a configured timeout, approximate it so UI input shows something:
+    long secsLeft = _slp->secondsUntilSleep();              // negative => due/armed
+    uint32_t timeoutSec = 0;
+    if (secsLeft >= 0) {
+      const uint32_t now  = _slp->nowEpoch();
+      const uint32_t last = _slp->lastActivityEpoch();
+      timeoutSec = (uint32_t)secsLeft + (now - last);
+    }
+    s["timeout_sec"]         = timeoutSec;                  // UI uses this to prefill
+    s["secs_to_sleep"]       = (int32_t)secsLeft;
     s["last_activity_epoch"] = _slp->lastActivityEpoch();
-    s["next_wake_epoch"]     = _slp->nextWakeEpoch();
+    s["next_wake_epoch"]     = _slp->nextWakeEpoch();       // UI formats to human time
     s["armed"]               = _slp->isArmed();
   }
 
+  // Fire it off (JSON + no-cache), no custom AsyncWebServerResponse plumbing needed.
   sendJSON(req, d);
 }
 
