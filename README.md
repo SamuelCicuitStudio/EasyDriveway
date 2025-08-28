@@ -138,21 +138,10 @@ This guarantees the ICM<→PSM contract and avoids payload drift. (Project sourc
 
 ---
 
-## 9) Repository layout (suggested)
+## 9) Repository layout 
 
 ```
-/docs/
-  EasyDriveWay-Spec.pdf
-/firmware/
-  /icm/
-    src/ … (WiFiManager, ESPNowManager, RTCManager, ICMLogFS)
-    include/CommandAPI.h
-  /psm/
-    src/ PSMEspNowManager.cpp
-    include/ PSMEspNowManager.h
-    include/ PSMCommandAPI.h   // PSM-only payloads; uses shared CommandAPI payloads
-/shared/
-  CommandAPI.h                  // single source of truth for header/opcodes/payloads
+
 ```
 
 ---
