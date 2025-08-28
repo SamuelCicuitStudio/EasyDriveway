@@ -1,25 +1,16 @@
-/* ICM Topology — Real Binder (uses device API) with fixed panels, grouped palette,
- * live MAC search, auto-scroll selection, uniqueness rules, and gauges.
- *
- * Endpoints (WiFiAPI.h):
- *  /api/peers/list   GET
- *  /api/peer/pair    POST {mac,type}
- *  /api/peer/remove  POST {mac}
- *  /api/topology/get GET
- *  /api/topology/set POST {links[,push]}
- *  /api/sequence/... relay test
- *  /api/sensor/daynight POST {mac}
- *
- * CHANGELOG (2025-08-26):
- * - Fixed init to auto-load saved topology from device (NVS) AFTER peers palette is ready.
- * - Removed accidental recursion pattern when fetching peers.
- * - Normalized MAC formatting and improved selection sync (table ⇄ palette ⇄ lane).
- * - Small UX touches: toasts, import/export safety, lane hints, and scroll-to-selected.
+
+/*! ICM Topology Binder (rewritten 2025-08-28)
+ * - Full refresh of peers/topology builder
+ * - Power panel wired to backend:
+ *      GET  /api/power/info
+ *      POST /api/power/cmd  { pwr_action: "on"|"off"|"status"|"refresh" }
+ * - Live gauges for V / A / °C with auto-refresh while Power panel is selected
+ * - Uses lowercase verbs in JSON (backend accepts pwr_action and action)
  */
 (() => {
   'use strict';
 
-  // ---------- DOM ----------
+  // ------------------------ DOM helpers ------------------------
   const $ = (id) => document.getElementById(id);
   const palette = $('palette');
   const lane = $('lane');
@@ -50,16 +41,10 @@
 
   const tOn = $('tOn'), tOff = $('tOff'), tRead = $('tRead');
 
-  // ---------- helper to render Day/Night pill ----------
-  function renderDayNight(isDay){
-    if (!siDN) return;
-    siDN.textContent = (isDay === 1) ? 'Day' : (isDay === 0) ? 'Night' : '—';
-    siDN.classList.remove('day', 'night');
-    if (isDay === 1) siDN.classList.add('day');
-    if (isDay === 0) siDN.classList.add('night');
-  }
-
-  const pwrOn = $('pwrOn'), pwrOff = $('pwrOff');
+  const pwrOnBtn = $('pwrOn'), pwrOffBtn = $('pwrOff');
+  const gPwrVolt = $('gPwrVolt'), gPwrCurr = $('gPwrCurr'), gPwrTemp = $('gPwrTemp');
+  const gRelTemp = $('gRelTemp');
+  const gSensTemp = $('gSensTemp');
 
   const logoutBtn = $('logoutBtn');
   if (logoutBtn) {
@@ -70,7 +55,7 @@
     });
   }
 
-  // ---------- MAC helpers ----------
+  // ------------------------ MAC helpers ------------------------
   function macNormalize12(s){
     return String(s||'').replace(/[^0-9a-f]/gi,'').toUpperCase().slice(0,12);
   }
@@ -102,7 +87,7 @@
   bindMacFormatter(pMac);
   bindMacFormatter(rMac);
 
-  // ---------- Gauges ----------
+  // ------------------------ Gauges ------------------------
   function setGauge(el, value, min, max, unit){
     if (!el) return;
     const v = Number(value ?? 0);
@@ -113,28 +98,32 @@
     el.style.setProperty('--min', lo.toString());
     el.style.setProperty('--max', hi.toString());
     el.style.setProperty('--pct', pct.toString());
-
-    // write label
-    el.innerHTML = `<div class="value">${v.toFixed( (unit==='V'||unit==='A') ? 1 : 0 )}<small>${unit ? ' ' + unit : ''}</small></div>`;
+    el.innerHTML = `<div class="value">${Number.isFinite(v) ? v.toFixed((unit==='V'||unit==='A')?1:0) : '—'}<small>${unit ? ' ' + unit : ''}</small></div>`;
   }
 
-  // ---------- State ----------
+  function renderDayNight(isDay){
+    if (!siDN) return;
+    siDN.textContent = (isDay === 1) ? 'Day' : (isDay === 0) ? 'Night' : '—';
+    siDN.classList.remove('day', 'night');
+    if (isDay === 1) siDN.classList.add('day');
+    if (isDay === 0) siDN.classList.add('night');
+  }
+
+  // ------------------------ State ------------------------
   let bricks = [];      // [{id, kind:'ENTRANCE'|'RELAY'|'PARKING'|'SENSOR', mac:'AA:..'}]
   let brickSeq = 1;
   let selectedId = null;            // selected chain brick id
-  let selectedPeer = null;          // {type, mac} when selection comes from peers (e.g., POWER)
-  let peers = [];       // [{type:'power'|'relay'|'sensor'|'entrance'|'parking', mac, online}]
+  let selectedPeer = null;          // {type, mac} when selection comes from peers (incl. POWER)
+  let peers = [];                   // from /api/peers/list
+  let pwrTimer = null;              // interval for power auto refresh
 
   const KIND_UP = (t) => String(t||'').toUpperCase();
   const kindLabel = (k) => ({POWER:'Power',ENTRANCE:'Entrance',RELAY:'Relay',PARKING:'Parking',SENSOR:'Sensor'}[k]||k);
   const kindTag   = (k) => ({POWER:'PWR', ENTRANCE:'ENT', RELAY:'REL', PARKING:'PRK', SENSOR:'SNS'}[k]||k);
-
-  function isChainPlaceable(kindUp) {
-    return ['ENTRANCE','RELAY','PARKING','SENSOR'].includes(KIND_UP(kindUp));
-  }
+  const isChainPlaceable = (kindUp) => ['ENTRANCE','RELAY','PARKING','SENSOR'].includes(KIND_UP(kindUp));
   const hasKindInChain = (kindUp) => bricks.some(b => KIND_UP(b.kind) === KIND_UP(kindUp));
 
-  // ---------- Toast ----------
+  // ------------------------ Toast ------------------------
   const showToast = (msg) => {
     if (!toast) return;
     toast.textContent = msg || 'OK';
@@ -142,7 +131,7 @@
     setTimeout(()=>toast.hidden = true, 1500);
   };
 
-  // ---------- Auto-scroll helpers ----------
+  // ------------------------ Auto-scroll helpers ------------------------
   function clearPeerRowSelection(){
     peersTbl?.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('selected'));
   }
@@ -155,9 +144,7 @@
       const same = (tdMac?.textContent || '').trim().toUpperCase() === macFmt;
       if (same){ tr.classList.add('selected'); found = tr; } else { tr.classList.remove('selected'); }
     });
-    if (found && peersScroll) {
-      found.scrollIntoView({block:'nearest', behavior:'smooth'});
-    }
+    if (found && peersScroll) found.scrollIntoView({block:'nearest', behavior:'smooth'});
   }
   function selectPalettePillByMac(mac){
     const macFmt = macFormatColon(mac);
@@ -174,26 +161,39 @@
     if (el) el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'smooth'});
   }
 
-  // ---------- Selection panel ----------
+  // ------------------------ Selection panel ------------------------
+  function ensurePwrTimer(enable){
+    if (pwrTimer) { clearInterval(pwrTimer); pwrTimer = null; }
+    if (enable) {
+      pwrTimer = setInterval(() => { readPower().catch(()=>{}); }, 3000);
+    }
+  }
+
   function updateSelectionPanel(kindUp, mac){
-    const kindName = kindLabel(kindUp);
-    siKind.textContent = kindName;
+    siKind.textContent = kindLabel(kindUp);
     siMac.textContent  = macFormatColon(mac) || '—';
 
     panelSensor.hidden = panelRelay.hidden = panelPower.hidden = true;
 
     if (kindUp === 'SENSOR' || kindUp === 'ENTRANCE' || kindUp === 'PARKING'){ 
       panelSensor.hidden = false;
-      setGauge($('gSensTemp'), 0, -20, 80, '°C');
+      setGauge(gSensTemp, 0, -20, 80, '°C');
       renderDayNight(undefined);
+      ensurePwrTimer(false);
     } else if (kindUp === 'RELAY'){
       panelRelay.hidden = false;
-      setGauge($('gRelTemp'), 0, -20, 100, '°C');
+      setGauge(gRelTemp, 0, -20, 100, '°C');
+      ensurePwrTimer(false);
     } else if (kindUp === 'POWER'){
       panelPower.hidden = false;
-      setGauge($('gPwrVolt'), 0, 0, 60, 'V');
-      setGauge($('gPwrCurr'), 0, 0, 10, 'A');
-      setGauge($('gPwrTemp'), 0, 0, 100, '°C');
+      // Start live power refresh
+      setGauge(gPwrVolt, 0, 0, 60, 'V');
+      setGauge(gPwrCurr, 0, 0, 10, 'A');
+      setGauge(gPwrTemp, 0, 0, 100, '°C');
+      readPower().catch(()=>{});
+      ensurePwrTimer(true);
+    } else {
+      ensurePwrTimer(false);
     }
 
     selNone.hidden = true;
@@ -205,9 +205,10 @@
     selNone.hidden = false;
     clearPeerRowSelection();
     document.querySelectorAll('.pill.selected').forEach(el => el.classList.remove('selected'));
+    ensurePwrTimer(false);
   }
 
-  // ---------- Lane (chain) rendering ----------
+  // ------------------------ Lane (chain) rendering ------------------------
   function redrawLane(){
     lane.innerHTML = '';
     if (!bricks.length) {
@@ -248,7 +249,6 @@
       if (i < bricks.length - 1) {
         const curr = b.kind.toUpperCase();
         const next = bricks[i+1].kind.toUpperCase();
-        // Add connector only if one is RELAY and the other is SENSOR/ENTRANCE/PARKING
         const isRelay = (k) => k === 'RELAY';
         const isSensorish = (k) => (k === 'SENSOR' || k === 'ENTRANCE' || k === 'PARKING');
         if ((isRelay(curr) && isSensorish(next)) || (isSensorish(curr) && isRelay(next))) {
@@ -308,7 +308,7 @@
     scrollBrickIntoView(node.id);
   }
 
-  // ----- Lane DnD target -----
+  // Lane DnD target
   lane.addEventListener('dragover', (ev) => ev.preventDefault());
   lane.addEventListener('drop', (ev) => {
     ev.preventDefault();
@@ -326,20 +326,18 @@
         const typeUp = KIND_UP(p.type);
         if (!isChainPlaceable(typeUp)) { showToast('Power modules are not placed in chain'); return; }
         if (bricks.some(b => macEqual(b.mac, p.mac))) { showToast('Already in chain'); return; }
-        // Enforce uniqueness for Entrance & Parking
         if (typeUp === 'ENTRANCE' && hasKindInChain('ENTRANCE')) { showToast('Only one Entrance allowed'); return; }
         if (typeUp === 'PARKING'  && hasKindInChain('PARKING'))  { showToast('Only one Parking allowed'); return; }
-
         bricks.push({ id: brickSeq++, kind: typeUp, mac: macFormatColon(p.mac) });
         redrawLane();
-        renderPalette(); // remove from Paired list once used
+        renderPalette(); // update used/unused
       }catch(e){}
     }
   });
 
   btnClear?.addEventListener('click', () => { bricks = []; selectedId=null; selectedPeer=null; redrawLane(); clearSelectionPanel(); renderPalette(); });
 
-  // ---------- Palette (grouped) ----------
+  // ------------------------ Palette (grouped) ------------------------
   function isUsed(mac){ return bricks.some(b => macEqual(b.mac, mac)); }
   function makePill(p, titleText, cls){
     const pill = document.createElement('button');
@@ -394,7 +392,7 @@
     appendGroup(palette, 'Parking', park);
   }
 
-  // ---------- Peers ----------
+  // ------------------------ Peers ------------------------
   async function fetchPeers(){
     const r = await fetch('/api/peers/list', {cache:'no-store'});
     if (!r.ok) throw new Error('peers list');
@@ -444,7 +442,6 @@
       bRm.addEventListener('click', ()=> removePeer(macFormatColon(p.mac||'')));
       tdR.appendChild(bRm);
 
-      // Clicking a row focuses selection
       tr.addEventListener('click', ()=> {
         const macDisp = macFormatColon(p.mac||'');
         if (isChainPlaceable(p.type)) {
@@ -467,7 +464,6 @@
   }
 
   peerSearch?.addEventListener('input', () => renderPeers());
-
   btnRefreshPeers?.addEventListener('click', () => fetchPeers().catch(()=>showToast('Peers refresh failed')));
 
   async function pairPeer(){
@@ -498,7 +494,7 @@
     removePeer(mac);
   });
 
-  // ---------- Build & persist topology ----------
+  // ------------------------ Build & persist topology ------------------------
   function buildLinks(){
     return bricks
       .filter(b => isChainPlaceable(b.kind))
@@ -521,7 +517,6 @@
     if (!r.ok) { showToast('Load failed'); return; }
     const j = await r.json(); // expect {links:[{type,mac,prev?,next?}]}
     const links = Array.isArray(j.links) ? j.links : [];
-    // Reset sequence counter so IDs don't overflow if user imports/loads repeatedly
     brickSeq = 1;
     bricks = links
       .filter(l => isChainPlaceable(l.type))
@@ -548,7 +543,7 @@
   btnSave?.addEventListener('click', ()=> saveToDevice(false).catch(()=>showToast('Save failed')));
   btnPush?.addEventListener('click', ()=> saveToDevice(true).catch(()=>showToast('Push failed')));
 
-  // export/import
+  // Export/import
   btnExport?.addEventListener('click', () => {
     const obj = { links: buildLinks() };
     const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'});
@@ -579,7 +574,7 @@
     fileImport.value = '';
   });
 
-  // ---------- Selected actions ----------
+  // ------------------------ Selected actions ------------------------
   async function testRelay(peerLike){
     const start = macFormatColon(peerLike.mac||'');
     if (!macIsCompleteColon(start)) return showToast('Missing MAC');
@@ -589,17 +584,16 @@
     });
     showToast('Relay test ON');
     siRelState.textContent = 'ON';
-    setGauge($('gRelTemp'), 35 + Math.random()*10, -20, 100, '°C');
+    setGauge(gRelTemp, 35 + Math.random()*10, -20, 100, '°C');
   }
   async function stopSeq(){
     await fetch('/api/sequence/stop', {method:'POST'});
     showToast('Relay OFF');
     siRelState.textContent = 'OFF';
-    setGauge($('gRelTemp'), 25 + Math.random()*5, -20, 100, '°C');
+    setGauge(gRelTemp, 25 + Math.random()*5, -20, 100, '°C');
   }
 
-
-  // ---------- API: day/night ----------
+  // ------------------------ API: day/night ------------------------
   async function readDayNight(peerLike){
     const mac = macFormatColon(peerLike?.mac || '');
     if (!macIsCompleteColon(mac)) { renderDayNight(undefined); return; }
@@ -620,24 +614,61 @@
   async function readSensor(peerLike){
     showToast('Sensor read requested');
     siSensStatus.textContent = 'OK';
-    setGauge($('gSensTemp'), 20 + Math.floor(Math.random()*10), -20, 80, '°C');
+    setGauge(gSensTemp, 20 + Math.floor(Math.random()*10), -20, 80, '°C');
     await readDayNight(peerLike);
   }
 
-  async function powerControl(on){
-    showToast(on ? 'Power ON' : 'Power OFF');
-    // Demo values for gauges (server routes exist and can be hooked later)
-    if (on){
-      setGauge($('gPwrVolt'), 48.0, 0, 60, 'V');
-      setGauge($('gPwrCurr'), 2.4, 0, 10, 'A');
-      setGauge($('gPwrTemp'), 37, 0, 100, '°C');
-    } else {
-      setGauge($('gPwrVolt'), 0.0, 0, 60, 'V');
-      setGauge($('gPwrCurr'), 0.0, 0, 10, 'A');
-      setGauge($('gPwrTemp'), 25, 0, 100, '°C');
+  // ------------------------ POWER: info & control ------------------------
+  function displayPower(j){
+    const v = Number(j?.vbus_mV ?? 0) / 1000;       // mV → V
+    const i = Number(j?.ibus_mA ?? 0) / 1000;       // mA → A
+    const t = Number.isFinite(Number(j?.tempC)) ? Number(j.tempC) : NaN;
+    setGauge(gPwrVolt, v, 0, 60, 'V');
+    setGauge(gPwrCurr, i, 0, 10, 'A');
+    setGauge(gPwrTemp, Number.isFinite(t) ? t : 0, 0, 100, '°C');
+    if (j && typeof j.on === 'boolean') {
+      pwrOnBtn?.classList.toggle('active', j.on);
+      pwrOffBtn?.classList.toggle('active', !j.on);
     }
   }
 
+  async function readPower(){
+    try{
+      const r = await fetch('/api/power/info', { cache:'no-store' });
+      if (!r.ok) throw new Error('pwr info');
+      const j = await r.json();
+      displayPower(j);
+    }catch(e){
+      // fallback visual
+      setGauge(gPwrVolt, 0, 0, 60, 'V');
+      setGauge(gPwrCurr, 0, 0, 10, 'A');
+      setGauge(gPwrTemp, 0, 0, 100, '°C');
+    }
+  }
+
+  async function powerCmd(act /* 'on'|'off'|'status'|'refresh' */){
+    try{
+      const r = await fetch('/api/power/cmd', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pwr_action: String(act||'').toLowerCase() })
+      });
+      if (!r.ok) { showToast('Power cmd failed'); return; }
+      const j = await r.json().catch(()=>null);
+      showToast('Power ' + String(act).toUpperCase());
+      // pull fresh telem after command
+      await readPower();
+      return j;
+    }catch(e){
+      showToast('Power cmd error');
+    }
+  }
+
+  // Hook up power buttons
+  pwrOnBtn?.addEventListener('click', ()=> powerCmd('on'));
+  pwrOffBtn?.addEventListener('click', ()=> powerCmd('off'));
+
+  // ------------------------ Toolbar actions ------------------------
   tOn?.addEventListener('click', ()=> {
     let target = null;
     if (selectedId != null){
@@ -661,25 +692,27 @@
     }
     readSensor(target || {});
   });
-  pwrOn?.addEventListener('click', ()=> powerControl(true));
-  pwrOff?.addEventListener('click', ()=> powerControl(false));
 
-  // ---------- Init ----------
+  // ------------------------ Init ------------------------
   async function initTopologyPage(){
-    // 1) Load peers (palette & table)
     await fetchPeers();
-    // 2) Then load saved topology (NVS) so lane reflects persisted configuration
     await loadFromDevice();
+    // If a power peer exists, preselect it to show live gauges quickly
+    const pwr = peers.find(p => String(p.type).toLowerCase()==='power');
+    if (pwr) {
+      selectedId = null;
+      selectedPeer = { type:pwr.type, mac: macFormatColon(pwr.mac||'') };
+      updateSelectionPanel('POWER', selectedPeer.mac);
+    }
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => { initTopologyPage().catch(()=>{}); });
   } else {
-    // DOM already ready
     initTopologyPage().catch(()=>{});
   }
 
-  // keyboard delete to remove a selected brick
+  // delete key removes selected brick
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Delete' && selectedId != null) {
       const i = bricks.findIndex(b => b.id === selectedId);

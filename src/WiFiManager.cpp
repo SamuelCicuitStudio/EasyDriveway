@@ -643,13 +643,87 @@ void WiFiManager::hSeqStop(AsyncWebServerRequest* req, uint8_t* data, size_t len
 
 /* ==================== Power (stubs) ==================== */
 void WiFiManager::hPowerInfo(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(256); d["status"] = "ok"; sendJSON(req, d);
-}
-void WiFiManager::hPowerCmd(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-    (void)data;(void)len;(void)index;(void)total; sendOK(req);
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  DynamicJsonDocument d(512);
+
+  if (_esn) {
+    const uint32_t nowMs = millis();
+    const uint32_t updMs = _esn->pwrLastUpdateMs();            // cached by ESPNowManager
+    const uint32_t ageMs = (updMs == 0) ? 0xFFFFFFFFu : (nowMs - updMs);
+    const bool     stale = (ageMs > 3000);                     // consider stale after 3s
+
+    d["ok"]         = true;
+    d["present"]    = true;                                    // optional: you can call getPowerModuleInfo() if you prefer
+    d["on"]         = _esn->pwrIsOn();
+    d["fault"]      = _esn->pwrFault();
+    d["vbus_mV"]    = _esn->pwrVbus_mV();
+    d["ibus_mA"]    = _esn->pwrIbus_mA();
+    d["vbat_mV"]    = _esn->pwrVbat_mV();
+    d["ibat_mA"]    = _esn->pwrIbat_mA();
+    d["tempC"]      = _esn->pwrTempC();                        // may be NaN if not provided
+    d["updated_ms"] = updMs;
+    d["age_ms"]     = ageMs;
+    d["stale"]      = stale;
+
+    // Opportunistic refresh using PUBLIC facade
+    if (stale) { (void)_esn->powerGetStatus(); }
+  } else {
+    d["ok"]   = false;
+    d["err"]  = "ESP-NOW offline";
+  }
+
+  sendJSON(req, d);
 }
 
-/* ==================== Live/status ==================== */
+void WiFiManager::hPowerCmd(AsyncWebServerRequest* req,
+                            uint8_t* data, size_t len, size_t index, size_t total) {
+  if (!isAuthed(req)) { req->send(401, "application/json", "{\"err\":\"auth\"}"); return; }
+
+  static String body; 
+  if (index == 0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(256);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+
+  // Prefer documented key "pwr_action" but keep compatibility with "action"
+  const char* action = nullptr;
+  if (d.containsKey(J_PWRACT))           action = d[J_PWRACT] | nullptr;     // macro from your WiFiAPI.h
+  else if (d.containsKey("pwr_action"))  action = d["pwr_action"] | nullptr; // literal fallback
+  else if (d.containsKey(J_ACTION))      action = d[J_ACTION] | nullptr;     // legacy macro
+  else if (d.containsKey("action"))      action = d["action"] | nullptr;     // literal legacy
+
+  if (!action || !*action) { sendError(req, "Missing 'pwr_action'"); return; }
+
+  if (!_esn) { sendError(req, "ESP-NOW offline", 503); return; }
+
+  String a(action);
+  a.toLowerCase();
+
+  bool ok = false;
+  // Map to PUBLIC power APIs
+  if (a == "on")            ok = _esn->powerSetOutput(true);
+  else if (a == "off")      ok = _esn->powerSetOutput(false);
+  else if (a == "shutdown") ok = _esn->powerRequestShutdown();
+  else if (a == "clear" || a == "clear_faults")
+                           ok = _esn->powerClearFault();
+  else if (a == "status" || a == "refresh")
+                           ok = _esn->powerGetStatus();
+  else {
+    // Also allow any future verbs handled by powerCommand(...)
+    ok = _esn->powerCommand(a);
+    if (!ok) { sendError(req, "action must be on|off|shutdown|clear|status|refresh"); return; }
+  }
+
+  if (!ok) { sendError(req, "Command failed", 500); return; }
+
+  DynamicJsonDocument res(128);
+  res["ok"]       = true;
+  res["accepted"] = a;  // echo normalized action
+  sendJSON(req, res);
+}/* ==================== Live/status ==================== */
 void WiFiManager::hLiveStatus(AsyncWebServerRequest* req) {
     DynamicJsonDocument d(64);
     d[J_OK] = isAuthed(req);

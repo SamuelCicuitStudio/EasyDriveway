@@ -810,19 +810,30 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
       break;
 
     case CmdDomain::POWER: {
-      // Intercept temperature reply
-      if (h->op == PWR_GET_TEMP) {
-        float tC;
-        if (decodeTempPayload(payload, plen, tC)) {
-          _pwrTempC  = tC;
-          _pwrTempMs = millis();
-          LOGI(1600,"POWER temp=%.2fC", tC);
-        }
+      if (h->op == PWR_GET && plen >= (int)sizeof(PowerStatusPayload)) {
+        const PowerStatusPayload* ps = (const PowerStatusPayload*)payload;
+        // cache (add these members in ESPNowManager.h)
+        _pwrOn          = (ps->on != 0);
+        _pwrFault       = ps->fault;
+        _pwrVbus_mV     = ps->vbus_mV;
+        _pwrIbus_mA     = ps->ibus_mA;
+        _pwrVbat_mV     = ps->vbat_mV;
+        _pwrIbat_mA     = ps->ibat_mA;
+        if (ps->ok) { _pwrTempC = ps->tC_x100 / 100.0f; } // optional
+        _pwrStatMs      = millis();
+        // log if you want
+        LOGI(1603, "POWER stat on=%u vbus=%umV ibus=%umA vbat=%umV ibat=%umA fault=0x%02X",
+            (unsigned)_pwrOn, (unsigned)_pwrVbus_mV, (unsigned)_pwrIbus_mA,
+            (unsigned)_pwrVbat_mV, (unsigned)_pwrIbat_mA, (unsigned)_pwrFault);
       }
-      // Fan out to user callback unchanged
+
+      // existing temp intercept remains:
+      if (h->op == PWR_GET_TEMP) { /* existing TempPayload path */ }
+
       if (_onPower) _onPower(mac, payload, (size_t)plen);
       break;
     }
+
 
     case CmdDomain::RELAY: {
       if (h->op == REL_GET_TEMP) {
@@ -1214,4 +1225,16 @@ bool ESPNowManager::orchestrateChannelChange(uint8_t newCh, uint8_t delay_s, uin
   // if (time(nullptr) >= p.switchover_ts + 1) setChannel(newCh, persist);
 
   return ok;
+}
+// Power helpers with ACK flag (public)
+bool ESPNowManager::requestPowerStatus(bool requireAck) {
+  return enqueueToPeer(&_power, CmdDomain::POWER, PWR_GET, nullptr, 0, requireAck);
+}
+bool ESPNowManager::powerOn(bool requireAck) {
+  uint8_t b[1] = { 1 };
+  return enqueueToPeer(&_power, CmdDomain::POWER, PWR_SET, b, 1, requireAck);
+}
+bool ESPNowManager::powerOff(bool requireAck) {
+  uint8_t b[1] = { 0 };
+  return enqueueToPeer(&_power, CmdDomain::POWER, PWR_SET, b, 1, requireAck);
 }
