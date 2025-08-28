@@ -1,6 +1,6 @@
 /**************************************************************
  *  Project     : EasyDriveWay - Power Supply Module (PSM)
- *  File        : PSMEspNowManager.h  (FIXED to align with ICM CommandAPI)
+ *  File        : PSMEspNowManager.h  (aligned with ICM CommandAPI)
  *  Purpose     : ESP-NOW slave for PSM + SD-card logging via ICMLogFS
  **************************************************************/
 #pragma once
@@ -8,62 +8,75 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
-
 #include "Config.h"
 #include "ConfigManager.h"
 #include "ICMLogFS.h"
 #include "RTCManager.h"
 #include "CommandAPI.h"
 #include "PSMCommandAPI.h"
-
-// ---------- Hardware measurement function prototypes (user will implement) ----------
-bool     hwIs48VOn();       // returns true if 48V rail is ON
-uint8_t  readFaultBits();   // bitfield (OVP/UVP/OCP/OTP/brownout…)
-uint16_t measure48V_mV();   // 48V bus voltage (mV)
-uint16_t measure48V_mA();   // 48V bus current (mA)
-uint16_t measureBat_mV();   // battery voltage (mV)
-uint16_t measureBat_mA();   // battery current (mA), +chg / –dischg
-float    readBoardTempC();  // local board temperature in °C
+#include "PowerManager.h"
+#include "CoolingManager.h"   
 
 class PSMEspNowManager {
 public:
-  // Callback types for integrating with the actual PSM hardware/logic
-  typedef bool (*OnSetPowerFn)(bool on);                   // return true on success
+  // Callbacks to integrate with real PSM hardware/logic
+  typedef bool (*OnSetPowerFn)(bool on);                      // return true on success
   typedef bool (*OnClearFaultFn)();
   typedef bool (*OnRequestShutdownFn)();
-  typedef bool (*OnComposeStatusFn)(PowerStatusPayload& out);// fill status, return ok  (FIXED type)
-  typedef bool (*OnReadTempFn)(float& tC);                 // optional
+  typedef bool (*OnComposeStatusFn)(PowerStatusPayload& out); // fill status, return ok
+  typedef bool (*OnReadTempFn)(float& tC);                    // optional callback for temp
 
 public:
-  PSMEspNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc);
+  PSMEspNowManager(ConfigManager* cfg,
+                   ICMLogFS* log,
+                   RTCManager* rtc,
+                   PowerManager* pm,
+                   CoolingManager* cool);
 
   bool begin(uint8_t channelDefault = 1, const char* pmk16 = nullptr);
   void end();
 
   // Attach hardware callbacks
-  void setOnSetPower(OnSetPowerFn fn)            { _onSetPower = fn; }
-  void setOnClearFault(OnClearFaultFn fn)        { _onClearFault = fn; }
-  void setOnRequestShutdown(OnRequestShutdownFn fn){ _onReqShutdown = fn; }
-  void setOnComposeStatus(OnComposeStatusFn fn)  { _onComposeStatus = fn; }
-  void setOnReadTemp(OnReadTempFn fn)            { _onReadTemp = fn; }
+  void setOnSetPower(OnSetPowerFn fn)               { _onSetPower      = fn; }
+  void setOnClearFault(OnClearFaultFn fn)           { _onClearFault    = fn; }
+  void setOnRequestShutdown(OnRequestShutdownFn fn) { _onReqShutdown   = fn; }
+  void setOnComposeStatus(OnComposeStatusFn fn)     { _onComposeStatus = fn; }
+  void setOnReadTemp(OnReadTempFn fn)               { _onReadTemp      = fn; }
 
   // For main loop
   void poll();
 
   // Info
-  String masterMacStr() const;
-  String myMacStr() const;
+  String  masterMacStr() const;
+  String  myMacStr() const;
   uint8_t channel() const { return _channel; }
-  bool hasToken() const { for(int i=0;i<16;++i){ if(_token16[i]) return true; } return false; }
+  bool    hasToken() const { for (int i=0;i<16;++i){ if (_token16[i]) return true; } return false; }
 
   // Manual utilities
   bool sendHeartbeat();
   bool sendCaps(uint8_t maj, uint8_t min, bool hasTemp, bool hasCharger, uint32_t features);
 
   // Non-volatile keys (<=6 chars each recommended)
-  String keyCh()   const { return String("PCH"); }
-  String keyTok()  const { return String("PTOK"); }
-  String keyMac()  const { return String("PMAC"); }
+  String keyCh()  const { return String("PCH"); }
+  String keyTok() const { return String("PTOK"); }
+  String keyMac() const { return String("PMAC"); }
+
+  // ---- Public, instance-based measurement/control (no globals) ----
+  bool     hwIs48VOn();       // true if 48V rail is ON
+  uint8_t  readFaultBits();   // bitfield (OVP/UVP/OCP/OTP/brownout…)
+  uint16_t measure48V_mV();   // 48V bus voltage (mV)
+  uint16_t measure48V_mA();   // 48V bus current (mA)
+  uint16_t measureBat_mV();   // battery voltage (mV)
+  uint16_t measureBat_mA();   // battery current (mA), +chg / –dischg
+
+  // Cooling / temperature (integrated here, not in PowerManager)
+  // Returns current board temperature in °C; NAN if not available.
+  float    readBoardTempC();
+
+  // Optional helpers to control rails through the same class
+  bool set48V(bool on);
+  bool set5V(bool on);
+  bool mainsPresent() const;  // uses PowerManager’s mains sense
 
 private:
   // Static thunks
@@ -75,10 +88,11 @@ private:
   void onSent(const uint8_t *mac, esp_now_send_status_t status);
 
   // Sending helpers
-  bool sendToMaster(CmdDomain dom, uint8_t op, const void* payload, size_t len, uint16_t ctrEcho=0, bool ackReq=false);
+  bool sendToMaster(CmdDomain dom, uint8_t op, const void* payload, size_t len,
+                    uint16_t ctrEcho=0, bool ackReq=false);
   bool sendAck(uint16_t ctr, uint8_t code);
   bool sendPowerStatus(uint16_t ctr);
-  bool sendTempReply(uint16_t ctr);
+  bool sendTempReply(uint16_t ctr);   // will call this->readBoardTempC()
 
   // Channel switching
   void applyChannel(uint8_t ch, bool persist);
@@ -95,21 +109,23 @@ private:
 private:
   static PSMEspNowManager* s_inst;
 
-  ConfigManager* _cfg = nullptr;
-  ICMLogFS*      _log = nullptr;
-  RTCManager*    _rtc = nullptr;
+  ConfigManager*  _cfg  = nullptr;
+  ICMLogFS*       _log  = nullptr;
+  RTCManager*     _rtc  = nullptr;
+  PowerManager*   _pm   = nullptr;
+  CoolingManager* _cool = nullptr;  
 
   // state
   bool     _started = false;
   uint8_t  _channel = 1;
   uint8_t  _masterMac[6] = {0};
-  uint8_t  _token16[16] = {0};
-  char     _pmk[17] = {0};
+  uint8_t  _token16[16]  = {0};
+  char     _pmk[17]      = {0};
 
   // callbacks
-  OnSetPowerFn        _onSetPower = nullptr;
-  OnClearFaultFn      _onClearFault = nullptr;
-  OnRequestShutdownFn _onReqShutdown = nullptr;
+  OnSetPowerFn        _onSetPower      = nullptr;
+  OnClearFaultFn      _onClearFault    = nullptr;
+  OnRequestShutdownFn _onReqShutdown   = nullptr;
   OnComposeStatusFn   _onComposeStatus = nullptr;
-  OnReadTempFn        _onReadTemp = nullptr;
+  OnReadTempFn        _onReadTemp      = nullptr;
 };

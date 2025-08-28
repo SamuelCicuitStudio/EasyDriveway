@@ -11,10 +11,12 @@
 
 PSMEspNowManager* PSMEspNowManager::s_inst = nullptr;
 
-PSMEspNowManager::PSMEspNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc)
-: _cfg(cfg), _log(log), _rtc(rtc) {
-  s_inst = this;
-}
+PSMEspNowManager::PSMEspNowManager(ConfigManager* cfg,
+                                   ICMLogFS* log,
+                                   RTCManager* rtc,
+                                   PowerManager* pm,
+                                   CoolingManager* cool)
+: _cfg(cfg), _log(log), _rtc(rtc), _pm(pm), _cool(cool) {}
 
 bool PSMEspNowManager::begin(uint8_t channelDefault, const char* pmk16) {
   // Load persisted channel
@@ -328,4 +330,57 @@ bool PSMEspNowManager::hexToBytes(const String& hex, uint8_t* out, size_t n) {
     if (hi<0||lo<0) return false; out[i]=(uint8_t)((hi<<4)|lo);
   }
   return true;
+}
+
+bool PSMEspNowManager::hwIs48VOn() {
+  return (_pm ? _pm->is48VOn() : false);
+}
+
+uint8_t PSMEspNowManager::readFaultBits() {
+  return (_pm ? _pm->readFaultBits() : 0);
+}
+
+uint16_t PSMEspNowManager::measure48V_mV() {
+  return (_pm ? _pm->measure48V_mV() : 0);
+}
+
+uint16_t PSMEspNowManager::measure48V_mA() {
+  return (_pm ? _pm->measure48V_mA() : 0);
+}
+
+uint16_t PSMEspNowManager::measureBat_mV() {
+  return (_pm ? _pm->measureBat_mV() : 0);
+}
+
+uint16_t PSMEspNowManager::measureBat_mA() {
+  return (_pm ? _pm->measureBat_mA() : 0);
+}
+
+bool PSMEspNowManager::set48V(bool on) {
+  return (_pm ? _pm->set48V(on) : false);
+}
+
+bool PSMEspNowManager::set5V(bool on) {
+  return (_pm ? _pm->set5V(on) : false);
+}
+
+bool PSMEspNowManager::mainsPresent() const {
+  // PowerManager::mainsPresent() is non-const; cast is safe if it only reads pins.
+  return (_pm ? const_cast<PowerManager*>(_pm)->mainsPresent() : false);
+}
+float PSMEspNowManager::readBoardTempC() {
+  // 1) Callback override (if user wants to source temp elsewhere)
+  if (_onReadTemp) {
+    float tC = NAN;
+    if (_onReadTemp(tC)) return tC;
+  }
+  // 2) Use CoolingManager live reading if available
+  if (_cool) {
+    // CoolingManager continuously samples; fetch the last stable reading:
+    // (see CoolingManager::lastTempC()).
+    float tC = _cool->lastTempC();
+    return tC; // may be NAN if sensor not ready yet
+  }
+  // 3) No source available
+  return NAN;
 }

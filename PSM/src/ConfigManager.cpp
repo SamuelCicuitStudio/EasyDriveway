@@ -314,13 +314,10 @@ void ConfigManager::initializeVariables() {
     PutInt   (SD_CS_PIN_KEY,     SD_CS_PIN_DEFAULT);
     PutInt   (SD_SCK_PIN_KEY,    SD_SCK_PIN_DEFAULT);
 
-    // I2C / RTC
-    PutString(RTC_MODEL_KEY,     RTC_MODEL_DEFAULT);
-    PutInt   (RTC_INT_PIN_KEY,   RTC_INT_PIN_DEFAULT);
-    PutInt   (RTC_32K_PIN_KEY,   RTC_32K_PIN_DEFAULT);
+    // I2C 
+
     PutInt   (I2C_SCL_PIN_KEY,   I2C_SCL_PIN_DEFAULT);
     PutInt   (I2C_SDA_PIN_KEY,   I2C_SDA_PIN_DEFAULT);
-    PutInt   (RTC_RST_PIN_KEY,   RTC_RST_PIN_DEFAULT);
 
     // Cooling & LEDs
     PutInt(FAN_PWM_PIN_KEY,      FAN_PWM_PIN_DEFAULT);
@@ -344,12 +341,21 @@ void ConfigManager::initializeVariables() {
     PutInt(CHARGER_INT_PIN_KEY,   CHARGER_INT_PIN_DEFAULT);
 
     // ---------------- Topology / Versions -----------------------
-    PutString(SYS_TOPOLOGY_KEY,    "{}");
     PutString(DEV_FNAME_KEY,       DEV_FNAME_DEFAULT);
     PutString(FW_VER_KEY,          FW_VER_DEFAULT);
     PutString(SW_VER_KEY,          SW_VER_DEFAULT);
     PutString(HW_VER_KEY,          HW_VER_DEFAULT);
     PutString(BUILD_STR_KEY,       BUILD_STR_DEFAULT);
+
+    // ACS781 (48V bus current sensor)
+    PutString(ACS_MODEL_KEY,    ACS_MODEL_DEFAULT);
+    PutInt   (ACS_VREF_MV_KEY,  ACS_VREF_MV_DEFAULT);
+    PutInt   (ACS_ZERO_MV_KEY,  ACS_ZERO_MV_DEFAULT);
+    PutInt   (ACS_SENS_UVPA_KEY,ACS_SENS_UVPA_DEFAULT);
+    PutInt   (ACS_AVG_KEY,      ACS_AVG_DEFAULT);
+    PutBool  (ACS_INV_KEY,      ACS_INV_DEFAULT);
+    PutInt   (ACS_ATTEN_KEY,    ACS_ATTEN_DEFAULT);
+
 }
 /**
  * @brief Gets a boolean value from preferences.
