@@ -381,6 +381,12 @@ void ConfigManager::initializeVariables() {
     PutString(SW_VER_KEY,          SW_VER_DEFAULT);
     PutString(HW_VER_KEY,          HW_VER_DEFAULT);
     PutString(BUILD_STR_KEY,       BUILD_STR_DEFAULT);
+
+    // Buzzer (model + wiring + user feedback enable)
+    PutString(BUZZER_MODEL_KEY,        BUZZER_MODEL_DEFAULT);        // e.g. "YS-MBZ12085C05R42"
+    PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
+    PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
+    PutBool  (BUZZER_FEEDBACK_KEY,     BUZZER_FEEDBACK_DEFAULT);     // 1 (enabled)
 }
 /**
  * @brief Gets a boolean value from preferences.
