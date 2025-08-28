@@ -159,7 +159,8 @@
 #define MAINS_SENSE_PIN_KEY         "MSNS"      // mains OK sense
 #define VBAT_ADC_PIN_KEY            "VBATAD"    // battery voltage ADC
 #define V48_ADC_PIN_KEY             "V48AD"     // 48V bus voltage ADC
-#define I48_ADC_PIN_KEY             "I48AD"     // 48V bus current ADC
+#define I48_ADC_PIN_KEY             "I48AD"     // 48V bus current ADC (ACS781 #1)
+#define IBAT_ADC_PIN_KEY            "IBATAD"    // battery current ADC   (ACS781 #2)
 #define CHARGER_INT_PIN_KEY         "CHINT"     // charger IRQ/status (opt.)
 
 #define PWR48_EN_PIN_DEFAULT        21
@@ -168,11 +169,48 @@
 #define VBAT_ADC_PIN_DEFAULT        9
 #define V48_ADC_PIN_DEFAULT         1
 #define I48_ADC_PIN_DEFAULT         2
+#define IBAT_ADC_PIN_DEFAULT        3
 #define CHARGER_INT_PIN_DEFAULT     10
 
 // ============================================================================
-// [6] ACS781 Current Sensor (config keys + defaults)
+// [6] Measurement scaling & thresholds (used by PowerManager)
 // ============================================================================
+// ADC millivolts -> real bus/battery millivolts: (mV * NUM / DEN)
+#define V48_SCALE_NUM_KEY           "V48SN"
+#define V48_SCALE_DEN_KEY           "V48SD"
+#define VBAT_SCALE_NUM_KEY          "VBTSN"
+#define VBAT_SCALE_DEN_KEY          "VBTSD"
+
+#define V48_SCALE_NUM_DEFAULT       1
+#define V48_SCALE_DEN_DEFAULT       1
+#define VBAT_SCALE_NUM_DEFAULT      1
+#define VBAT_SCALE_DEN_DEFAULT      1
+
+// Fault thresholds (mV / mA / °C)
+#define VBUS_OVP_MV_KEY             "VBOVP"
+#define VBUS_UVP_MV_KEY             "VBUVP"
+#define IBUS_OCP_MA_KEY             "BIOCP"
+#define VBAT_OVP_MV_KEY             "VBOVB"
+#define VBAT_UVP_MV_KEY             "VBUVB"
+#define IBAT_OCP_MA_KEY             "BAOCP"
+#define OTP_C_KEY                   "OTPC"
+
+#define VBUS_OVP_MV_DEFAULT         56000   // 56 V
+#define VBUS_UVP_MV_DEFAULT         36000   // 36 V
+#define IBUS_OCP_MA_DEFAULT         20000   // 20 A
+
+#define VBAT_OVP_MV_DEFAULT         14600   // ~4S Li-ion max
+#define VBAT_UVP_MV_DEFAULT         11000   // UVP ~11.0 V
+#define IBAT_OCP_MA_DEFAULT         10000   // 10 A
+
+#define OTP_C_DEFAULT               85      // °C
+
+// ============================================================================
+// [7] ACS781 Current Sensors
+// ============================================================================
+// 7.0 Legacy/generic keys (kept for backward compatibility and shared-cal)
+// If you currently use a single set of calibration values for both sensors,
+// these keys are used by the default ACS781 helper.
 #define ACS_MODEL_KEY               "ACSMOD"    // e.g., "ACS781-100B"
 #define ACS_VREF_MV_KEY             "AVREF"     // board Vref (mV)
 #define ACS_ZERO_MV_KEY             "AZERO"     // zero-current offset (mV)
@@ -189,8 +227,42 @@
 #define ACS_INV_DEFAULT             0
 #define ACS_ATTEN_DEFAULT           3          // 11 dB
 
+// 7.1 IBUS (48V bus) sensor: ACS781 #1 (optional per-sensor overrides)
+#define ACS_BUS_MODEL_KEY           "ABMODL"
+#define ACS_BUS_VREF_MV_KEY         "ABVREF"
+#define ACS_BUS_ZERO_MV_KEY         "ABZERO"
+#define ACS_BUS_SENS_UVPA_KEY       "ABSNSU"
+#define ACS_BUS_AVG_KEY             "ABAVG"
+#define ACS_BUS_INV_KEY             "ABINV"
+#define ACS_BUS_ATTEN_KEY           "ABATTN"
+
+#define ACS_BUS_MODEL_DEFAULT       "ACS781-100B-T"
+#define ACS_BUS_VREF_MV_DEFAULT     3300
+#define ACS_BUS_ZERO_MV_DEFAULT     1650
+#define ACS_BUS_SENS_UVPA_DEFAULT   13200
+#define ACS_BUS_AVG_DEFAULT         16
+#define ACS_BUS_INV_DEFAULT         0
+#define ACS_BUS_ATTEN_DEFAULT       3
+
+// 7.2 IBAT (battery) sensor: ACS781 #2 (optional per-sensor overrides)
+#define ACS_BAT_MODEL_KEY           "BAMODL"
+#define ACS_BAT_VREF_MV_KEY         "BAVREF"
+#define ACS_BAT_ZERO_MV_KEY         "BAZERO"
+#define ACS_BAT_SENS_UVPA_KEY       "BASNSU"
+#define ACS_BAT_AVG_KEY             "BAAVG"
+#define ACS_BAT_INV_KEY             "BAINV"
+#define ACS_BAT_ATTEN_KEY           "BAATTN"
+
+#define ACS_BAT_MODEL_DEFAULT       "ACS781-100B-T"
+#define ACS_BAT_VREF_MV_DEFAULT     3300
+#define ACS_BAT_ZERO_MV_DEFAULT     1650
+#define ACS_BAT_SENS_UVPA_DEFAULT   13200
+#define ACS_BAT_AVG_DEFAULT         16
+#define ACS_BAT_INV_DEFAULT         0
+#define ACS_BAT_ATTEN_DEFAULT       3
+
 // ============================================================================
-// [7] Networking (compile-time constants)
+// [8] Networking (compile-time constants)
 // ============================================================================
 #define NTP_SERVER                  "pool.ntp.org"
 #define NTP_UPDATE_INTERVAL_MS      60000

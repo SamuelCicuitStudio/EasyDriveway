@@ -298,9 +298,9 @@ void ConfigManager::initializeVariables() {
     PutString(PSM_MASTER_MAC_KEY, "");    // learned from first valid packet
 
     // ---------------- User / Security ---------------------------
-    PutString(PASS_PIN_KEY, PASS_PIN_DEFAULT);
-    PutString(WEB_USER_KEY, WEB_USER_DEFAULT);
-    PutString(WEB_PASS_KEY, WEB_PASS_DEFAULT);
+    PutString(PASS_PIN_KEY,  PASS_PIN_DEFAULT);
+    PutString(WEB_USER_KEY,  WEB_USER_DEFAULT);
+    PutString(WEB_PASS_KEY,  WEB_PASS_DEFAULT);
 
     // ---------------- Timekeeping -------------------------------
     PutULong64(CURRENT_TIME_SAVED_KEY, CURRENT_TIME_SAVED_DEFAULT);
@@ -314,8 +314,7 @@ void ConfigManager::initializeVariables() {
     PutInt   (SD_CS_PIN_KEY,     SD_CS_PIN_DEFAULT);
     PutInt   (SD_SCK_PIN_KEY,    SD_SCK_PIN_DEFAULT);
 
-    // I2C 
-
+    // I2C
     PutInt   (I2C_SCL_PIN_KEY,   I2C_SCL_PIN_DEFAULT);
     PutInt   (I2C_SDA_PIN_KEY,   I2C_SDA_PIN_DEFAULT);
 
@@ -338,7 +337,43 @@ void ConfigManager::initializeVariables() {
     PutInt(VBAT_ADC_PIN_KEY,      VBAT_ADC_PIN_DEFAULT);
     PutInt(V48_ADC_PIN_KEY,       V48_ADC_PIN_DEFAULT);
     PutInt(I48_ADC_PIN_KEY,       I48_ADC_PIN_DEFAULT);
+    PutInt(IBAT_ADC_PIN_KEY,      IBAT_ADC_PIN_DEFAULT);     // NEW: battery current ADC
     PutInt(CHARGER_INT_PIN_KEY,   CHARGER_INT_PIN_DEFAULT);
+
+    // ---------------- Measurement scaling & thresholds ----------
+    // Voltage divider scales (ADC mV -> real mV)
+    PutInt(V48_SCALE_NUM_KEY, V48_SCALE_NUM_DEFAULT);
+    PutInt(V48_SCALE_DEN_KEY, V48_SCALE_DEN_DEFAULT);
+    PutInt(VBAT_SCALE_NUM_KEY, VBAT_SCALE_NUM_DEFAULT);
+    PutInt(VBAT_SCALE_DEN_KEY, VBAT_SCALE_DEN_DEFAULT);
+
+    // Fault thresholds
+    PutInt(VBUS_OVP_MV_KEY,  VBUS_OVP_MV_DEFAULT);
+    PutInt(VBUS_UVP_MV_KEY,  VBUS_UVP_MV_DEFAULT);
+    PutInt(IBUS_OCP_MA_KEY,  IBUS_OCP_MA_DEFAULT);
+    PutInt(VBAT_OVP_MV_KEY,  VBAT_OVP_MV_DEFAULT);
+    PutInt(VBAT_UVP_MV_KEY,  VBAT_UVP_MV_DEFAULT);
+    PutInt(IBAT_OCP_MA_KEY,  IBAT_OCP_MA_DEFAULT);
+    PutInt(OTP_C_KEY,        OTP_C_DEFAULT);
+
+    // ---------------- ACS781 current sensors (two) --------------
+    // 1) IBUS (48V bus) sensor
+    PutString(ACS_BUS_MODEL_KEY,     ACS_BUS_MODEL_DEFAULT);
+    PutInt   (ACS_BUS_VREF_MV_KEY,   ACS_BUS_VREF_MV_DEFAULT);
+    PutInt   (ACS_BUS_ZERO_MV_KEY,   ACS_BUS_ZERO_MV_DEFAULT);
+    PutInt   (ACS_BUS_SENS_UVPA_KEY, ACS_BUS_SENS_UVPA_DEFAULT);
+    PutInt   (ACS_BUS_AVG_KEY,       ACS_BUS_AVG_DEFAULT);
+    PutBool  (ACS_BUS_INV_KEY,       ACS_BUS_INV_DEFAULT);
+    PutInt   (ACS_BUS_ATTEN_KEY,     ACS_BUS_ATTEN_DEFAULT);
+
+    // 2) IBAT (battery) sensor
+    PutString(ACS_BAT_MODEL_KEY,     ACS_BAT_MODEL_DEFAULT);
+    PutInt   (ACS_BAT_VREF_MV_KEY,   ACS_BAT_VREF_MV_DEFAULT);
+    PutInt   (ACS_BAT_ZERO_MV_KEY,   ACS_BAT_ZERO_MV_DEFAULT);
+    PutInt   (ACS_BAT_SENS_UVPA_KEY, ACS_BAT_SENS_UVPA_DEFAULT);
+    PutInt   (ACS_BAT_AVG_KEY,       ACS_BAT_AVG_DEFAULT);
+    PutBool  (ACS_BAT_INV_KEY,       ACS_BAT_INV_DEFAULT);
+    PutInt   (ACS_BAT_ATTEN_KEY,     ACS_BAT_ATTEN_DEFAULT);
 
     // ---------------- Topology / Versions -----------------------
     PutString(DEV_FNAME_KEY,       DEV_FNAME_DEFAULT);
@@ -346,16 +381,6 @@ void ConfigManager::initializeVariables() {
     PutString(SW_VER_KEY,          SW_VER_DEFAULT);
     PutString(HW_VER_KEY,          HW_VER_DEFAULT);
     PutString(BUILD_STR_KEY,       BUILD_STR_DEFAULT);
-
-    // ACS781 (48V bus current sensor)
-    PutString(ACS_MODEL_KEY,    ACS_MODEL_DEFAULT);
-    PutInt   (ACS_VREF_MV_KEY,  ACS_VREF_MV_DEFAULT);
-    PutInt   (ACS_ZERO_MV_KEY,  ACS_ZERO_MV_DEFAULT);
-    PutInt   (ACS_SENS_UVPA_KEY,ACS_SENS_UVPA_DEFAULT);
-    PutInt   (ACS_AVG_KEY,      ACS_AVG_DEFAULT);
-    PutBool  (ACS_INV_KEY,      ACS_INV_DEFAULT);
-    PutInt   (ACS_ATTEN_KEY,    ACS_ATTEN_DEFAULT);
-
 }
 /**
  * @brief Gets a boolean value from preferences.
