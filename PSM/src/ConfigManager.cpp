@@ -387,6 +387,8 @@ void ConfigManager::initializeVariables() {
     PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
     PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
     PutBool  (BUZZER_FEEDBACK_KEY,     BUZZER_FEEDBACK_DEFAULT);     // 1 (enabled)
+    // Persist a flag if you want this to survive reboot; here we run inline mode
+    PutBool(SERIAL_ONLY_FLAG_KEY, false);
 }
 /**
  * @brief Gets a boolean value from preferences.

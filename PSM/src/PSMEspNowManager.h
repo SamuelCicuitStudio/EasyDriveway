@@ -86,14 +86,14 @@ private:
   // Instance handlers
   void onRecv(const uint8_t *mac, const uint8_t *data, int len);
   void onSent(const uint8_t *mac, esp_now_send_status_t status);
-
+public:
   // Sending helpers
   bool sendToMaster(CmdDomain dom, uint8_t op, const void* payload, size_t len,
                     uint16_t ctrEcho=0, bool ackReq=false);
   bool sendAck(uint16_t ctr, uint8_t code);
   bool sendPowerStatus(uint16_t ctr);
   bool sendTempReply(uint16_t ctr);   // will call this->readBoardTempC()
-
+private:
   // Channel switching
   void applyChannel(uint8_t ch, bool persist);
 

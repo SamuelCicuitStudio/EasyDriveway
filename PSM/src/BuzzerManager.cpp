@@ -1,39 +1,39 @@
+
 #include "BuzzerManager.h"
 
+// ----------------------
+// Init
+// ----------------------
 bool BuzzerManager::begin() {
   if (!_cfg) return false;
 
-  // fetch from NVS
   _pin        = _cfg->GetInt (BUZZER_PIN_KEY,         BUZZER_PIN_DEFAULT);
   _activeHigh = _cfg->GetBool(BUZZER_ACTIVE_HIGH_KEY, BUZZER_ACTIVE_HIGH_DEFAULT);
-  _enabled    = _cfg->GetBool(BUZZER_FEEDBACK_KEY,    BUZZER_FEEDBACK_DEFAULT);
+  _enabled    = _cfg->GetBool(BUZZER_ENABLED_KEY,     BUZZER_ENABLED_DEFAULT);
 
   pinMode(_pin, OUTPUT);
-  applyIdle();               // silence
-
+  idleLevel();
   return true;
 }
 
-void BuzzerManager::setEnabled(bool en) {
-  _enabled = en;
-  if (_cfg) _cfg->PutBool(BUZZER_FEEDBACK_KEY, en);
-  if (!en) stop();
-}
-
-void BuzzerManager::applyIdle() {
+// ----------------------
+// Utilities / low-level
+// ----------------------
+void BuzzerManager::idleLevel() {
+  // idle = off
   digitalWrite(_pin, _activeHigh ? LOW : HIGH);
 }
 
 void BuzzerManager::toneOn(uint16_t freq) {
-  // Use Arduino tone() if available on your core
+  // Use tone/noTone (non-blocking square wave) if supported on target
   tone(_pin, freq);
-  // For active-buzzer (no frequency control), fallback to DC on/off
+  // Fallback for simple active buzzers (DC on/off):
   // digitalWrite(_pin, _activeHigh ? HIGH : LOW);
 }
 
 void BuzzerManager::toneOff() {
   noTone(_pin);
-  applyIdle();
+  idleLevel();
 }
 
 void BuzzerManager::bip(uint16_t freq, uint16_t ms) {
@@ -43,16 +43,21 @@ void BuzzerManager::bip(uint16_t freq, uint16_t ms) {
   toneOff();
 }
 
+void BuzzerManager::setEnabled(bool en) {
+  _enabled = en;
+  if (_cfg) _cfg->PutBool(BUZZER_ENABLED_KEY, en);
+  if (!en) stop();
+}
+
 void BuzzerManager::stop() {
-  if (_task) {
-    vTaskDelete(_task);
-    _task = nullptr;
-  }
+  if (_task) { vTaskDelete(_task); _task = nullptr; }
   toneOff();
 }
 
+// ----------------------
+// Pattern runner (task)
+// ----------------------
 void BuzzerManager::taskThunk(void* arg) {
-  // Copy pattern from heap, then free immediately
   auto* pkg = static_cast<std::pair<BuzzerManager*, std::vector<Step>>*>(arg);
   BuzzerManager* self = pkg->first;
   std::vector<Step> steps = std::move(pkg->second);
@@ -60,7 +65,7 @@ void BuzzerManager::taskThunk(void* arg) {
 
   for (const auto& s : steps) {
     if (!self->_enabled) break;
-    if (s.freq > 0 && s.durMs > 0) {
+    if (s.freq && s.durMs) {
       self->toneOn(s.freq);
       vTaskDelay(pdMS_TO_TICKS(s.durMs));
       self->toneOff();
@@ -74,123 +79,160 @@ void BuzzerManager::taskThunk(void* arg) {
 
 void BuzzerManager::runPattern(const Step* steps, size_t count) {
   if (!_enabled) return;
-
-  // Stop any previous pattern
   if (_task) { vTaskDelete(_task); _task = nullptr; }
 
-  // Package steps for the task
   auto* pkg = new std::pair<BuzzerManager*, std::vector<Step>>(
-      this, std::vector<Step>(steps, steps + count));
-  xTaskCreate(taskThunk, "BuzzSeq", 2048, pkg, 1, &_task);
+    this, std::vector<Step>(steps, steps + count));
+  xTaskCreate(taskThunk, "BZPAT", 2048, pkg, 1, &_task);
 }
 
+// ----------------------
+// Event -> Pattern map
+// (freq Hz, duration ms, pause ms)
+// ----------------------
 void BuzzerManager::play(Event ev) {
   if (!_enabled) return;
 
-  // Define all your patterns here
-  // (freq Hz, duration ms, pause ms)
   switch (ev) {
     case EV_STARTUP: {
-      static const Step k[] = {
-        { 600, 80, 40 }, { 1000, 80, 40 }, { 1400, 80, 0 }
-      };
+      static const Step k[] = { { 700, 60, 40 }, { 1200, 60, 40 }, { 1700, 80, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_READY: {
-      static const Step k[] = {
-        { 2000, 50, 40 }, { 2500, 50, 0 }
-      };
+    case EV_CONFIG_MODE: {
+      static const Step k[] = { { 1000, 40, 60 }, { 1000, 40, 200 }, { 1000, 40, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_WIFI_CONNECTED: {
-      static const Step k[] = {
-        { 1200, 100, 40 }, { 1500, 100, 0 }
-      };
+    case EV_CONFIG_SAVED: {
+      static const Step k[] = { { 1400, 60, 40 }, { 1800, 80, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_WIFI_OFF: {
-      static const Step k[] = {
-        { 800, 150, 0 }
-      };
+    case EV_LINK_UP: {
+      static const Step k[] = { { 1100, 40, 30 }, { 1400, 50, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_BLE_PAIRING: {
-      static const Step k[] = {
-        { 1000, 40, 40 }, { 1000, 40, 120 }, { 1000, 40, 40 }, { 1000, 40, 0 }
-      };
+    case EV_LINK_DOWN: {
+      static const Step k[] = { { 1000, 60, 40 }, { 800, 60, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_BLE_PAIRED: {
-      static const Step k[] = {
-        { 1300, 120, 0 }
-      };
+    case EV_MAINS_PRESENT: {
+      static const Step k[] = { { 900, 60, 30 }, { 1200, 60, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_BLE_UNPAIRED: {
-      static const Step k[] = {
-        { 1200, 80, 40 }, { 900, 60, 0 }
-      };
-      runPattern(k, sizeof(k)/sizeof(k[0])); break;
-    }
-    case EV_CLIENT_CONNECTED: {
-      static const Step k[] = {
-        { 1100, 50, 30 }, { 1300, 60, 0 }
-      };
-      runPattern(k, sizeof(k)/sizeof(k[0])); break;
-    }
-    case EV_CLIENT_DISCONNECTED: {
-      static const Step k[] = {
-        { 1200, 80, 40 }, { 900, 60, 0 }
-      };
-      runPattern(k, sizeof(k)/sizeof(k[0])); break;
-    }
-    case EV_POWER_GONE: {      // AC lost
-      static const Step k[] = {
-        { 400, 200, 100 }, { 400, 200, 100 }, { 400, 200, 0 }
-      };
+    case EV_MAINS_LOST: {
+      static const Step k[] = { { 500, 180, 120 }, { 500, 180, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
     case EV_ON_BATTERY: {
-      static const Step k[] = {
-        { 900, 60, 40 }, { 1000, 60, 40 }, { 1100, 60, 0 }
-      };
+      static const Step k[] = { { 950, 50, 50 }, { 1050, 50, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_LOW_POWER: {
-      static const Step k[] = {
-        { 500, 120, 120 }, { 500, 120, 0 }
-      };
+    case EV_BAT_CHARGING: {
+      static const Step k[] = { { 1200, 30, 40 }, { 1200, 30, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_OVER_TEMP: {
-      static const Step k[] = {
-        { 2000, 40, 60 }, { 2000, 40, 60 }, { 2000, 40, 60 }, { 2000, 40, 0 }
-      };
+    case EV_BAT_FULL: {
+      static const Step k[] = { { 1600, 80, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_FAULT: {
-      static const Step k[] = {
-        { 300, 80, 40 }, { 300, 80, 40 }, { 300, 80, 40 }, { 300, 80, 40 }, { 300, 80, 0 }
-      };
+    case EV_LOW_BAT: {
+      static const Step k[] = { { 450, 120, 120 }, { 450, 120, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_48V_ON: {
+      static const Step k[] = { { 1000, 40, 30 }, { 1300, 60, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_48V_OFF: {
+      static const Step k[] = { { 900, 40, 30 }, { 700, 60, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_OVERCURRENT: {
+      static const Step k[] = { { 300, 80, 40 }, { 300, 80, 40 }, { 300, 80, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_OVERTEMP: {
+      static const Step k[] = { { 2000, 40, 60 }, { 2000, 40, 60 }, { 2000, 40, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_COMM_ERROR: {
+      static const Step k[] = { { 800, 50, 120 }, { 800, 50, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_BITE_PASS: {
+      static const Step k[] = { { 1200, 50, 30 }, { 1500, 50, 30 }, { 1800, 60, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_BITE_FAIL: {
+      static const Step k[] = { { 500, 80, 60 }, { 500, 80, 60 }, { 500, 120, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
     case EV_SHUTDOWN: {
-      static const Step k[] = {
-        { 1500, 80, 50 }, { 1000, 80, 50 }, { 600,  80, 0 }
-      };
+      static const Step k[] = { { 1500, 60, 40 }, { 1000, 60, 40 }, { 700, 60, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_SUCCESS: {
-      static const Step k[] = {
-        { 1000, 40, 30 }, { 1300, 40, 30 }, { 1600, 60, 0 }
-      };
-      runPattern(k, sizeof(k)/sizeof(k[0])); break;
-    }
-    case EV_FAILED: {
-      static const Step k[] = {
-        { 500, 50, 50 }, { 500, 50, 0 }
-      };
+    case EV_FAULT: {
+      static const Step k[] = { { 350, 100, 60 }, { 350, 100, 60 }, { 350, 100, 60 }, { 350, 100, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
   }
 }
+
+// ----------------------
+// Status edge -> sounds
+// Priority: Faults > Mains Lost/Low Bat > OverTemp/OverCurrent > Rail edges > Link edges
+// ----------------------
+void BuzzerManager::playFromStatus(const Status& now, const Status* prev) {
+  if (!_enabled) return;
+
+  if (now.fault) {
+    if (!prev || (prev && !prev->fault)) { play(EV_FAULT); }
+    return;
+  }
+  if (now.lowBat) {
+    if (!prev || (prev && !prev->lowBat)) { play(EV_LOW_BAT); }
+    // continue checking other criticals
+  }
+  if (now.overTemp) {
+    if (!prev || (prev && !prev->overTemp)) { play(EV_OVERTEMP); }
+  }
+  if (now.overCurrent) {
+    if (!prev || (prev && !prev->overCurrent)) { play(EV_OVERCURRENT); }
+  }
+  if (prev) {
+    if (prev->mains && !now.mains) { play(EV_MAINS_LOST); return; }
+    if (!prev->mains && now.mains) { play(EV_MAINS_PRESENT); }
+    if (!prev->onBattery && now.onBattery) { play(EV_ON_BATTERY); }
+    if (!prev->charging && now.charging) { play(EV_BAT_CHARGING); }
+    if (!prev->batFull && now.batFull) { play(EV_BAT_FULL); }
+    if (!prev->rail48V && now.rail48V) { play(EV_48V_ON); }
+    if (prev->rail48V && !now.rail48V) { play(EV_48V_OFF); }
+    if (!prev->linkUp && now.linkUp) { play(EV_LINK_UP); }
+    if (prev->linkUp && !now.linkUp) { play(EV_LINK_DOWN); }
+    if (!prev->commError && now.commError) { play(EV_COMM_ERROR); }
+  } else {
+    // First snapshot: only play strong conditions
+    if (!now.mains) play(EV_MAINS_LOST);
+    if (now.onBattery) play(EV_ON_BATTERY);
+    if (now.lowBat) play(EV_LOW_BAT);
+    if (now.overTemp) play(EV_OVERTEMP);
+    if (now.overCurrent) play(EV_OVERCURRENT);
+    if (now.rail48V) play(EV_48V_ON);
+  }
+}
+
+// ----------------------
+// High-level helpers
+// ----------------------
+void BuzzerManager::onSetRail48VResult(bool requestedOn, bool ok) {
+  if (!ok) { play(EV_FAULT); return; }
+  play(requestedOn ? EV_48V_ON : EV_48V_OFF);
+}
+
+void BuzzerManager::onClearFaultResult(bool ok) {
+  play(ok ? EV_BITE_PASS : EV_BITE_FAIL);
+}
+
+void BuzzerManager::onEnterConfigMode() { play(EV_CONFIG_MODE); }
+void BuzzerManager::onSaveConfig(bool ok) { play(ok ? EV_CONFIG_SAVED : EV_BITE_FAIL); }
+void BuzzerManager::onLinkChange(bool up) { play(up ? EV_LINK_UP : EV_LINK_DOWN); }
+void BuzzerManager::onShutdownRequested() { play(EV_SHUTDOWN); }

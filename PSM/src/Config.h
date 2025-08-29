@@ -256,5 +256,25 @@
 // ============================================================================
 #define NTP_SERVER                  "pool.ntp.org"
 #define NTP_UPDATE_INTERVAL_MS      60000
+// ==================================================
+// Switch Configuration
+// ==================================================
+
+#define SW_USER_BOOT_PIN               0                    // Boot button pin
+#define POWER_ON_SWITCH_PIN            6                    // Physical power button
+#define SWITCH_TASK_STACK_SIZE            2048
+#define SWITCH_TASK_CORE                  PRO_CPU_NUM
+#define SWITCH_TASK_PRIORITY              1
+// ───────────────────────────────────────────────
+// Device operational states
+// ───────────────────────────────────────────────
+enum class DeviceState {
+    Idle,
+    Running,
+    Error,
+    Shutdown
+};
+
+#define SERIAL_ONLY_FLAG_KEY            "SRLONL"  // set true to boot into serial-only CLI
 
 #endif // CONFIG_PSM_H
