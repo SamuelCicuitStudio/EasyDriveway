@@ -13,6 +13,10 @@ bool PowerManager::begin() {
   loadScales();
   loadThresholds();
 
+  if (_pinChgEn >= 0) {
+    pinMode(_pinChgEn, OUTPUT);
+    digitalWrite(_pinChgEn, LOW);   // default: charging disabled at boot
+  }
   if (_pinPwr48En >= 0) pinMode(_pinPwr48En, OUTPUT);
   if (_pinPwr5vEn >= 0) pinMode(_pinPwr5vEn, OUTPUT);
   if (_pinMainsSense >= 0) pinMode(_pinMainsSense, INPUT);
@@ -109,16 +113,19 @@ uint16_t PowerManager::measureBat_mA() {
 
 // -------------------- Internals --------------------
 void PowerManager::loadPins() {
-  _pinPwr48En    = _cfg->GetInt(PWR48_EN_PIN_KEY,  PWR48_EN_PIN_DEFAULT);
-  _pinPwr5vEn    = _cfg->GetInt(PWR5V_EN_PIN_KEY,  PWR5V_EN_PIN_DEFAULT);
-  _pinMainsSense = _cfg->GetInt(MAINS_SENSE_PIN_KEY, MAINS_SENSE_PIN_DEFAULT);
-  _pinV48Adc     = _cfg->GetInt(V48_ADC_PIN_KEY,   V48_ADC_PIN_DEFAULT);
-  _pinVBatAdc    = _cfg->GetInt(VBAT_ADC_PIN_KEY,  VBAT_ADC_PIN_DEFAULT);
-  _pinI48Adc     = _cfg->GetInt(I48_ADC_PIN_KEY,   I48_ADC_PIN_DEFAULT);
-  // IBAT pin may not exist in config; default to -1
-  int ibat = _cfg->GetInt(IBAT_ADC_PIN_KEY, -1);
-  _pinIBatAdc    = ibat;
+  _pinPwr48En    = _cfg->GetInt(PWR48_EN_PIN_KEY,      PWR48_EN_PIN_DEFAULT);
+  _pinPwr5vEn    = _cfg->GetInt(PWR5V_EN_PIN_KEY,      PWR5V_EN_PIN_DEFAULT);
+  _pinMainsSense = _cfg->GetInt(MAINS_SENSE_PIN_KEY,   MAINS_SENSE_PIN_DEFAULT);
+
+  _pinV48Adc     = _cfg->GetInt(V48_ADC_PIN_KEY,       V48_ADC_PIN_DEFAULT);
+  _pinVBatAdc    = _cfg->GetInt(VBAT_ADC_PIN_KEY,      VBAT_ADC_PIN_DEFAULT);
+  _pinI48Adc     = _cfg->GetInt(I48_ADC_PIN_KEY,       I48_ADC_PIN_DEFAULT);
+
+  // Optional inputs/outputs
+  _pinIBatAdc    = _cfg->GetInt(IBAT_ADC_PIN_KEY,      -1);                       // may be absent
+  _pinChgEn      = _cfg->GetInt(CHARGER_EN_PIN_KEY,    CHARGER_EN_PIN_DEFAULT);   // charger ENABLE (output)
 }
+
 
 void PowerManager::loadScales() {
   _v48_num  = _cfg->GetInt(V48_SCALE_NUM_KEY, DEF_V48_NUM);
@@ -162,4 +169,16 @@ bool PowerManager::readDigitalOrAnalogHigh(int pin) {
   return (mv > 800);
 }
 
+bool PowerManager::setChargeEnable(bool en) {
+  if (_pinChgEn < 0) return false;          // no charger enable pin configured
+  pinMode(_pinChgEn, OUTPUT);               // ensure it's an output
+  digitalWrite(_pinChgEn, en ? HIGH : LOW); // HIGH = enable (adjust if your hardware is active-low)
+  return true;
+}
 
+bool PowerManager::isChargeEnabled() {
+  if (_pinChgEn < 0) return false;          // no pin, treat as disabled
+  // On ESP32, digitalRead() on an OUTPUT pin returns the last driven level.
+  // If your driver inverts the signal, invert the check here.
+  return digitalRead(_pinChgEn) == HIGH;
+}

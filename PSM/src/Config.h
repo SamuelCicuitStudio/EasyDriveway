@@ -161,7 +161,7 @@
 #define VBAT_ADC_PIN_KEY            "VBATAD"    // battery voltage ADC
 #define I48_ADC_PIN_KEY             "I48AD"     // 48V bus current ADC (ACS781 #1)
 #define IBAT_ADC_PIN_KEY            "IBATAD"    // battery current ADC   (ACS781 #2)
-#define CHARGER_INT_PIN_KEY         "CHINT"     // charger IRQ/status (opt.)
+#define CHARGER_EN_PIN_KEY         "CHEN"     // charger ENABLE
 #define PWR48_EN_PIN_DEFAULT        21
 #define PWR5V_EN_PIN_DEFAULT        22
 #define MAINS_SENSE_PIN_DEFAULT     23
@@ -169,7 +169,7 @@
 #define VBAT_ADC_PIN_DEFAULT        9
 #define I48_ADC_PIN_DEFAULT         2
 #define IBAT_ADC_PIN_DEFAULT        3
-#define CHARGER_INT_PIN_DEFAULT     10
+#define CHARGER_EN_PIN_DEFAULT     10
 
 // ============================================================================
 // [6] Measurement Scaling & Fault Thresholds (used by PowerManager)

@@ -338,7 +338,7 @@ void ConfigManager::initializeVariables() {
     PutInt(V48_ADC_PIN_KEY,       V48_ADC_PIN_DEFAULT);
     PutInt(I48_ADC_PIN_KEY,       I48_ADC_PIN_DEFAULT);
     PutInt(IBAT_ADC_PIN_KEY,      IBAT_ADC_PIN_DEFAULT);     // NEW: battery current ADC
-    PutInt(CHARGER_INT_PIN_KEY,   CHARGER_INT_PIN_DEFAULT);
+    PutInt(CHARGER_EN_PIN_KEY,    CHARGER_EN_PIN_DEFAULT);
 
     // ---------------- Measurement scaling & thresholds ----------
     // Voltage divider scales (ADC mV -> real mV)
