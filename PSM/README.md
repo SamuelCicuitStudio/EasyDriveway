@@ -1,145 +1,196 @@
 # EasyDriveWay – Power Supply Module (PSM)
 
-**PSM** is the power node of the EasyDriveWay system. It is **fully commanded by the Interface Control Module (ICM)** over **ESP-NOW**; PSM does not expose a standalone UI and is expected to follow ICM’s orders (power on/off, status, telemetry). PSM also logs locally to SD, monitors temperatures and fan, and reports detailed power metrics and fault bits back to ICM. &#x20;
+**PSM** is the power node of the EasyDriveWay system. It is **fully commanded by the Interface Control Module (ICM)** over **ESP-NOW**; PSM does not expose a standalone UI and is expected to follow ICM’s orders (power on/off, status, telemetry). PSM logs locally to SD, monitors temperature and fan, and reports detailed power metrics and fault bits back to ICM.
 
 ---
 
 ## High-level architecture
 
-* **ESP-NOW slave/agent**: `PSMEspNowManager` handles radio setup, token check, message receive/send, and composes replies for power/temperature/status per the shared command protocol. It provides **instance methods** for measurements (`measure48V_mV/mA`, `measureBat_mV/mA`), fault reads, and helpers to switch 48 V/5 V rails by delegating to `PowerManager`.&#x20;
-* **Power control & metering**: `PowerManager` controls rail enable GPIOs, reads mains sense and ADCs for **VBUS/VBAT** and two **ACS781** hall sensors (**IBUS** and **IBAT**), and computes a **fault bitfield** (OVP/UVP/OCP/OTP/Brownout). Scaling and thresholds are configurable via NVS keys.&#x20;
-* **Cooling & board temperature**: `CoolingManager` runs a DS18B20 probe + PWM fan with auto/forced modes and exposes the latest °C reading (used by PSM for OTP and telemetry).&#x20;
-* **Logging**: `ICMLogFS` initializes SD from config pins and writes structured logs per domain (POWER/ESPNOW/etc.). Useful for field diagnostics.&#x20;
-* **RTC**: `RTCManager` keeps the same external API but now uses the **ESP32 internal RTC** only; all I²C RTC specifics are stubbed to keep dependencies working.&#x20;
-* **UX peripherals**: optional **RGB LED** status helper and **buzzer** event beeps; both are config-driven. &#x20;
+* **ESP-NOW slave/agent** — `PSMEspNowManager` handles radio setup, token check, command parsing, and status/telemetry replies. It delegates rail control and measurements to `PowerManager`.
+* **Power control & metering** — `PowerManager` controls rail enables (48 V, 5 V), **charger enable**, reads **mains sense**, measures **VBUS/VBAT** and **IBUS/IBAT** (two ACS781 sensors), and computes a **fault bitfield** (OVP/UVP/OCP/OTP/Brownout).
+* **Cooling & temperature** — `CoolingManager` reads a DS18B20 and drives a PWM fan. Its temperature feeds OTP checks and telemetry.
+* **Logging** — `ICMLogFS` initializes SD and writes structured logs (POWER / ESPNOW / etc.).
+* **RTC** — `RTCManager` uses ESP32’s internal RTC for timestamps.
+* **UX peripherals** — optional **RGB LED** and **Buzzer** for quick visual/audible state cues.
 
 ---
 
-## Command & Telemetry protocol (shared with ICM)
+## Power-path topology (48 V system)
 
-All messages are defined in the shared **`CommandAPI.h`**. Domains include `SYS`, `POWER`, `RELAY`, `SENS`, `TOPO`, `SEQ`. PSM primarily handles:
+**Goal:** Seamless priority OR-ing between **Charger 48 V** and **Battery 48 V**, protected low-voltage generation, and two controlled relays (load on/off, battery charge connect).
 
-* `SYS_INIT/SYS_ACK/SYS_HB/SYS_CAPS/SYS_SET_CH` for bring-up and housekeeping.
-* `PWR_GET/PWR_SET/PWR_REQSDN/PWR_CLRF/PWR_GET_TEMP` for power control and telemetry.
-  The common header `IcmMsgHdr` carries version, domain/opcode, flags, timestamp, counter, and the 16-byte token used for authentication.&#x20;
+```
+          ┌──────────── 48 V INPUTS ────────────┐
+          │                                     │
+          │  Charger 48 V In      Battery 48 V In
+          │   (wall PSU)              (pack)
+          │   Fuse + TVS               Fuse + TVS
+          │       │                        │
+          │     IN1                       IN2
+          │      │                         │
+          └──────┴───────── LTC4355 (Ideal-Diode OR) ───────────┐
+                           Q1‖Q2       Q3‖Q4                    │
+                                            OUT (48 V BUS)      │
+                                                                │
+                              (A) Low-voltage branch            │
+                              ----------------------            │
+                              LM74800  →  LM5161  →  5 V BUS ───┼───┐
+                           (RPP/Inrush)   (48→5 buck)           │   │
+                                                                │   │
+                                                          USB 5 V  ─┘ (OR into 5 V BUS via ideal-diode/power-mux)
+                                                                │
+                                                        TPSM863252 (5→3.3 buck)
+                                                                │
+                                                           3.3 V BUS (ESP32/logic)
 
-**Power status payload** returned by PSM (`PWR_GET` and async status) contains:
-`on`, `fault` bits, `vbus_mV`, `ibus_mA`, `vbat_mV`, `ibat_mA`, and optional `tC_x100`.&#x20;
+                              (B) 48 V distribution
+                              ---------------------
+                         Direct 48 V → ICM
+                         48 V → Relay #1 (LOAD ON/OFF) → Other 48 V Loads
+
+                              (C) Charge path
+                              --------------
+   Charger 48 V + ── Relay #2 (CHARGE, CHEN) ──► Battery +
+   (PSU priority via LTC4355; relay simply connects charger to pack for charge)
+```
+
+**Control & sense (ESP32):**
+
+* **GPIO21** → Relay #1 (LOAD ON/OFF coil driver)
+* **GPIO10 (CHEN)** → Relay #2 (CHARGE coil driver)  ← *new Charger Enable*
+* **GPIO22** → 5 V enable (if used by board)
+* **GPIO23** → Mains presence (digital or via divider)
+* **ADC**: VBUS(48 V), VBAT via divider + 3.6 V clamp; IBUS/IBAT via ACS781
+
+**Notes:**
+
+* **LTC4355** performs ideal-diode OR-ing of Charger and Battery; the higher source supplies the **48 V BUS**.
+* **LM74800** adds reverse-polarity protection/inrush control to the low-voltage branch before **LM5161** (48→5 V).
+* **USB 5 V** is **OR-ed** with the local 5 V via ideal-diode/power-mux (avoid hard paralleling).
+* **Relays**: use MOSFET low-side drivers with proper flyback/TVS; coils sized for 48 V.
+
+---
+
+## Command & telemetry (shared with ICM)
+
+All messages are defined in **`CommandAPI.h`** (domains `SYS`, `POWER`, `RELAY`, `SENS`, `TOPO`, `SEQ`).
+
+Key flows handled by PSM:
+
+* `SYS_INIT / SYS_ACK / SYS_HB / SYS_CAPS / SYS_SET_CH`
+* `PWR_GET / PWR_SET / PWR_REQSDN / PWR_CLRF / PWR_GET_TEMP`
+
+**Power status payload** includes: rail on/off, **fault bits**, `vbus_mV`, `ibus_mA`, `vbat_mV`, `ibat_mA`, optional `tC_x100`.
+(*You can extend it with a `chg_en` boolean if the ICM wants explicit charger-enable state.*)
 
 ---
 
 ## Configuration keys & hardware mapping
 
-All keys live in **`Config.h`** (≤6 chars to keep NVS compact). Key groups:
+All keys live in **`Config.h`** (≤6 chars). Highlights:
 
-* **Identity & networking**: device id, Wi-Fi AP/STA, BLE, ESP-NOW channel & mode, and PSM-side mirrors `PCH/PTOK/PMAC` for channel, token, master MAC.&#x20;
-* **Pins**: SD (`SD*`), I²C (`I2CSCL/I2CSDA`), cooling & RGB, temperature sensor, rail enables, mains sense, voltage ADCs (`V48AD/VBATAD`), **current ADCs** (`I48AD` for IBUS and **`IBATAD`** for battery current).&#x20;
-* **Scaling & thresholds** (used by `PowerManager`): `V48SN/V48SD`, `VBTSN/VBTSD` scale ADC mV to real volts; thresholds include `VBOVP/VBUVP/BIOCP` and `VBOVB/VBUVB/BAOCP`, plus `OTPC`.&#x20;
-* **ACS781 calibration**: legacy generic `ACS_*` keys are provided, plus **per-sensor overrides** for bus (`AB*`) and battery (`BA*`) if you want different sensitivity/zero/atten/avg/invert.&#x20;
+* **Pins**
+  SD: `SD*` • I²C: `I2CSCL/I2CSDA` • Cooling/RGB pins
+  Temperature: DS18B20 pin/pullup
+  Rails & sense: `P48EN` (48 V enable), `P5VEN` (5 V enable), `MSNS` (mains sense),
+  ADCs: `V48AD` (VBUS), `VBATAD` (VBAT), `I48AD` (IBUS), `IBATAD` (IBAT),
+  **Charger enable:** `CHEN` (**CHARGER\_EN\_PIN\_KEY**) **← new**
 
-> See `ConfigManager::initializeVariables()` in your app to seed defaults into NVS at first run (mirrors the keys above). *(Your provided initializer already populates the pin map, scaling, thresholds, and both ACS blocks.)*&#x20;
+* **Scaling & thresholds** (used by `PowerManager`)
+  Voltage scale: `V48SN/V48SD`, `VBTSN/VBTSD`
+  Fault limits: `VBOVP/VBUVP/BIOCP` (bus), `VBOVB/VBUVB/BAOCP` (battery), and `OTPC`.
+
+* **ESP-NOW**
+  `ESCHNL`/`ESMODE`, plus PSM mirrors `PCH/PTOK/PMAC` (channel, token, master MAC).
+
+> Seed defaults in `ConfigManager::initializeVariables()` at first boot. Ensure you add:
+> `PutInt(CHARGER_EN_PIN_KEY, CHARGER_EN_PIN_DEFAULT);`
 
 ---
 
 ## Module details
 
-### PSMEspNowManager (radio/control surface)
+### PSMEspNowManager
 
-* Ctor wires `ConfigManager`, `ICMLogFS`, `RTCManager`, `PowerManager`, and optionally `CoolingManager`.
-* Public helpers expose measurements and controls (no globals):
-  `hwIs48VOn()`, `readFaultBits()`, `measure48V_mV/mA`, `measureBat_mV/mA`, `set48V()`, `set5V()`, `mainsPresent()`, and `readBoardTempC()`.
-* Implements send/receive thunks, token check, channel apply, and composite replies (`sendPowerStatus`, `sendTempReply`).&#x20;
+* Injects `ConfigManager`, `ICMLogFS`, `RTCManager`, `PowerManager`, `CoolingManager`.
+* Exposes helpers: `hwIs48VOn()`, `readFaultBits()`, `measure48V_mV/mA`, `measureBat_mV/mA`, `set48V()`, `set5V()`, `mainsPresent()`, `readBoardTempC()`.
 
-### PowerManager (rails + metering + faults)
+### PowerManager
 
-* **Controls**: GPIOs for 48 V / 5 V rails; reads **mains** presence.
-* **Voltages**: `V48AD`, `VBATAD` with per-rail scaling from NVS.
-* **Currents**: two **ACS781** instances — **IBUS** on `I48AD`, **IBAT** on `IBATAD` (optional if not wired).
-* **Faults**: builds an 8-bit map (OVP/UVP/OCP/OTP/Brownout) using thresholds from NVS.&#x20;
+* **Controls**: `set48V()`, `set5V()`, **`setChargeEnable()`** (new)
+* **State**: `is48VOn()`, `mainsPresent()`, **`isChargeEnabled()`** (new), `readFaultBits()`
+* **Measurements**: VBUS/VBAT (dividers), IBUS/IBAT (ACS781)
+* **Faults**: 8-bit map (OVP/UVP/OCP/OTP/Brownout)
 
-### ACS781 (current sensor helper)
+### CoolingManager / RTCManager / ICMLogFS / RGBLed / Buzzer
 
-* Reads calibrated ADC mV → amps using sensitivity (µV/A), zero offset, averaging, and attenuation from NVS. Supports inversion and on-device zero calibration.&#x20;
-
-### CoolingManager (temperature + fan)
-
-* Periodic DS18B20 sampling, PWM fan control (LEDC), modes (AUTO/ECO/NORM/FORCED), and log throttling. PSM’s temp telemetry reads from here (or an optional callback).&#x20;
-
-### RTCManager (ESP32 internal RTC)
-
-* Keeps previous class interface but stubs I²C RTC plumbing; all time comes from system/`time.h`. Handy for timestamped logs and message headers.&#x20;
-
-### ICMLogFS (SD logging)
-
-* Loads SD pins from config, creates/rotates per-domain logs, streams files over UART, and exposes a small command server.&#x20;
-
-### RGBLed / BuzzerManager (optional UX)
-
-* **RGBLed**: config-driven pins, simple patterns, and direct RGB writes for system feedback.
-* **Buzzer**: event-based beep sequences; NVS toggle `BZFEED` to enable/disable. &#x20;
+* DS18B20 + PWM fan • ESP32 RTC timestamps • SD logs • status LED/blips
 
 ---
 
 ## Build & dependencies
 
-This is an **ESP32 Arduino** project. From headers you’ll need (typical via PlatformIO or Arduino Library Manager):
+ESP32 Arduino (PlatformIO or Arduino IDE). Typical libs:
 
 * Core: `WiFi.h`, `esp_now.h`, `esp_wifi.h`
 * FS/SD: `FS.h`, `SD.h`, `SPI.h`
-* Sensors: `OneWire`, `DallasTemperature` (for DS18B20)
-* Time: `RTClib` (for `DateTime` types only; actual time from `time.h`)
-  All are referenced in the module headers above.  &#x20;
+* Sensors: `OneWire`, `DallasTemperature`
+* Time: standard `time.h` (RTC wrapper only provides API compatibility)
 
 ---
 
-## Bring-up sequence (suggested)
+## Bring-up
 
 ```cpp
-// Create managers (inject ConfigManager everywhere)
 RTCManager       rtc(&cfg);
 ICMLogFS         log(Serial, &cfg);
 CoolingManager   cool(&cfg, &log);
 PowerManager     power(&cfg);
 PSMEspNowManager pnow(&cfg, &log, &rtc, &power, &cool);
 
-// Init order
-rtc.begin();                     // internal RTC
-log.beginFromConfig();           // mount SD
-cool.begin();                    // temp + fan PWM
-power.begin();                   // pins, scales, thresholds, ACS781
-pnow.begin(/*channelDefault*/1); // ESP-NOW slave; token will come from ICM
+rtc.begin();
+log.beginFromConfig();
+cool.begin();
+power.begin();                // sets up pins, loads scales/thresholds
+pnow.begin(cfg.GetInt(ESPNOW_CH_KEY, 1));
 ```
 
-PSM will then accept ICM opcodes and return telemetry using the `PowerStatusPayload` structure. &#x20;
+Example **charger policy** (enable only when mains is present):
+
+```cpp
+bool onMains = power.mainsPresent();
+power.setChargeEnable(onMains);
+```
 
 ---
 
 ## Configuration quick reference
 
-* **Rails & sense pins**: `P48EN`, `P5VEN`, `MSNS`, `V48AD`, `VBATAD`, `I48AD`, `IBATAD`. Defaults are defined; override in NVS if your board differs.&#x20;
-* **Scaling**: `V48SN/V48SD` and `VBTSN/VBTSD` (numerator/denominator).&#x20;
-* **Fault thresholds**: `VBOVP/VBUVP/BIOCP` (bus) and `VBOVB/VBUVB/BAOCP` (battery), plus `OTPC`.&#x20;
-* **ACS781**: common `ACS_*` keys, or per-sensor `AB*` (bus) / `BA*` (battery).&#x20;
-* **ESP-NOW**: `ESCHNL`, `ESMODE`, and PSM mirrors `PCH/PTOK/PMAC`.&#x20;
+* **Pins**: `P48EN`, `P5VEN`, `MSNS`, `V48AD`, `VBATAD`, `I48AD`, `IBATAD`, **`CHEN`**
+* **Scaling**: `V48SN/V48SD` and `VBTSN/VBTSD`
+* **Fault thresholds**: `VBOVP/VBUVP/BIOCP` (bus), `VBOVB/VBUVB/BAOCP` (battery), `OTPC`
+* **ESP-NOW**: `ESCHNL`, `ESMODE` (+ mirrors `PCH/PTOK/PMAC`)
 
 ---
 
 ## File map
 
-* `PSMEspNowManager.h/.cpp` – ESP-NOW control/telemetry surface toward ICM.&#x20;
-* `PowerManager.h/.cpp` – rails, ADC & ACS781 readings, fault bits.&#x20;
-* `ACS781.h/.cpp` – hall current sensor helper.&#x20;
-* `CoolingManager.h/.cpp` – DS18B20 + PWM fan + auto logic.&#x20;
-* `RTCManager.h/.cpp` – internal ESP32 RTC wrapper (compat API).&#x20;
-* `ICMLogFS.h/.cpp` – SD logging system.&#x20;
-* `RGBLed.h/.cpp`, `BuzzerManager.h/.cpp` – optional UX. &#x20;
-* `CommandAPI.h` – shared message header, opcodes, and payloads.&#x20;
-* `Config.h` – all keys/defaults for pins, scaling, thresholds, ESP-NOW.&#x20;
+* `PSMEspNowManager.h/.cpp` — ESP-NOW control/telemetry toward ICM
+* `PowerManager.h/.cpp` — rails, ADC & ACS781 readings, faults, **charger enable**
+* `ACS781.h/.cpp` — hall current sensor helper
+* `CoolingManager.h/.cpp` — DS18B20 + PWM fan
+* `RTCManager.h/.cpp` — internal RTC wrapper
+* `ICMLogFS.h/.cpp` — SD logging
+* `RGBLed.h/.cpp`, `BuzzerManager.h/.cpp` — optional UX
+* `CommandAPI.h` — shared message structures/opcodes
+* `Config.h` — all keys/defaults (pins, scale, thresholds, ESP-NOW)
 
 ---
 
 ## Notes
 
-* PSM is **ICM-driven**: treat PSM as a radio-attached peripheral. It should not change rails autonomously except for local safety (e.g., OTP/OCP). Command→reply flows and payloads are strictly those in `CommandAPI.h`.&#x20;
-* Temperature is sourced from `CoolingManager` (or a temp callback) and included in power status when available.&#x20;
+* PSM is **ICM-driven**: it should not autonomously toggle rails except for safety (OTP/OCP/UVP).
+* The **Charger Enable** (`CHEN`) controls **Relay #2** to connect the charger to the battery for charging; source selection between charger and battery feeding the BUS is handled by the **LTC4355**.
+* Protect the 48 V rail with **TVS + fuses**, use proper **ADC dividers + clamps**, and drive relays with MOSFETs and **flyback/TVS** snubbers.
 
+---
