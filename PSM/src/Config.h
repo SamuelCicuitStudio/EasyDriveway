@@ -129,9 +129,9 @@
 #define LED_G_PIN_KEY               "LEDG"
 #define LED_B_PIN_KEY               "LEDB"
 // Non-conflicting defaults (avoid I2C_SDA=5)
-#define LED_R_PIN_DEFAULT           12
-#define LED_G_PIN_DEFAULT           13
-#define LED_B_PIN_DEFAULT           14
+#define LED_R_PIN_DEFAULT           6
+#define LED_G_PIN_DEFAULT           7
+#define LED_B_PIN_DEFAULT           8
 
 // Buzzer
 #define BUZZER_MODEL_KEY            "BZMODL"
@@ -164,7 +164,7 @@
 #define CHARGER_EN_PIN_KEY         "CHEN"     // charger ENABLE
 #define PWR48_EN_PIN_DEFAULT        21
 #define PWR5V_EN_PIN_DEFAULT        22
-#define MAINS_SENSE_PIN_DEFAULT     23
+#define MAINS_SENSE_PIN_DEFAULT     14
 #define V48_ADC_PIN_DEFAULT         1
 #define VBAT_ADC_PIN_DEFAULT        9
 #define I48_ADC_PIN_DEFAULT         2
