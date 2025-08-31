@@ -1,9 +1,8 @@
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
- *  File        : ESPNowManager.h  — regrouped by domains (power / relay / sensors / topology)
- *  Note        : This is a **structural re‑ordering** of declarations only.
- *                All public APIs and private members from the original header
- *                are preserved; only grouped and annotated for clarity.
+ *  File        : ESPNowManager.h — NEW-ONLY (Zero-Centered + Boundaries)
+ *  Notes       : This header matches the rewritten ESPNowManager.cpp.
+ *                Legacy topology (links/next-hop/dependency) is removed.
  **************************************************************/
 #pragma once
 
@@ -22,8 +21,37 @@
 
 class ESPNowManager {
 public:  // ============================ TYPES & CALLBACKS ============================
-  // Module kinds managed by the ICM over ESP‑NOW
+  // Module kinds managed by the ICM over ESP-NOW
   enum class ModuleType : uint8_t { POWER=0, RELAY=1, PRESENCE=2 };
+
+  // For each sensor: its neighbors + two ordered lists of relays (neg/pos)
+  struct ZcSensorMirror {
+    bool     used = false;
+    uint8_t  sensIdx = 0xFF;
+
+    // neighbors
+    bool     hasPrev = false, hasNext = false;
+    uint8_t  prevSensIdx = 0xFF, nextSensIdx = 0xFF;
+    uint8_t  prevSensMac[6] = {0}, nextSensMac[6] = {0};
+    uint8_t  prevSensTok16[16] = {0}, nextSensTok16[16] = {0};
+
+    // ordered lists (local coordinates)
+    ZcRelEntry neg[ICM_MAX_RELAYS]; uint8_t nNeg = 0;
+    ZcRelEntry pos[ICM_MAX_RELAYS]; uint8_t nPos = 0;
+  };
+
+  // For each relay: two boundary sensors allowed to command it
+  struct RelayBoundaryMirror {
+    bool     used = false;
+    uint8_t  relayIdx = 0xFF;
+
+    bool     hasA = false, hasB = false;
+    uint8_t  aSensIdx = 0xFF, bSensIdx = 0xFF;
+    uint8_t  aSensMac[6] = {0}, bSensMac[6] = {0};
+    uint8_t  aSensTok16[16] = {0}, bSensTok16[16] = {0};
+
+    uint8_t  splitRule = SPLIT_RULE_MAC_ASC_IS_POS_LEFT;
+  };
 
   // Peer record for a remote module (power/relay/sensor)
   struct PeerRec {
@@ -38,31 +66,6 @@ public:  // ============================ TYPES & CALLBACKS =====================
     uint32_t   lastSeen = 0;
   };
 
-  // In‑RAM topology mirrors (what we push to slaves)
-  struct RelayLink {
-    bool     used      = false;
-    uint8_t  nextMac[6]= {0};
-    uint32_t nextIPv4  = 0;
-    // track preceding sensor for context/acks
-    bool     hasPrev   = false;
-    uint8_t  prevSensIdx = 0xFF;
-    uint8_t  prevSensMac[6] = {0};
-  };
-  struct SensorDep {
-    bool     used = false;
-    uint8_t  targetType = 1;  // relay
-    uint8_t  targetIdx = 0;
-    uint8_t  targetMac[6] = {0};
-    uint32_t targetIPv4 = 0;
-  };
-
-  // App‑level callbacks
-  typedef void (*OnAckFn)(const uint8_t mac[6], uint16_t ctr, uint8_t code);
-  typedef void (*OnPowerFn)(const uint8_t mac[6], const uint8_t* payload, size_t len);
-  typedef void (*OnRelayFn)(const uint8_t mac[6], uint8_t relayIdx, const uint8_t* payload, size_t len);
-  typedef void (*OnPresenceFn)(const uint8_t mac[6], uint8_t sensIdx, const uint8_t* payload, size_t len);
-  typedef void (*OnUnknownFn)(const uint8_t mac[6], const IcmMsgHdr& h, const uint8_t* payload, size_t len);
-
 public:  // ============================ LIFECYCLE & GLOBAL ============================
   ESPNowManager(ConfigManager* cfg, ICMLogFS* log, RTCManager* rtc);
 
@@ -72,6 +75,12 @@ public:  // ============================ LIFECYCLE & GLOBAL ====================
   void poll();  // call frequently from loop()
 
   // Register callbacks
+  typedef void (*OnAckFn)(const uint8_t mac[6], uint16_t ctr, uint8_t code);
+  typedef void (*OnPowerFn)(const uint8_t mac[6], const uint8_t* payload, size_t len);
+  typedef void (*OnRelayFn)(const uint8_t mac[6], uint8_t relayIdx, const uint8_t* payload, size_t len);
+  typedef void (*OnPresenceFn)(const uint8_t mac[6], uint8_t sensIdx, const uint8_t* payload, size_t len);
+  typedef void (*OnUnknownFn)(const uint8_t mac[6], const IcmMsgHdr& h, const uint8_t* payload, size_t len);
+
   void setOnAck      (OnAckFn      fn) { _onAck = fn; }
   void setOnPower    (OnPowerFn    fn) { _onPower = fn; }
   void setOnRelay    (OnRelayFn    fn) { _onRelay = fn; }
@@ -146,55 +155,62 @@ public:  // ============================ PEERS / PAIRING =======================
   bool pairPresenceParking (const String& macStr);
   bool unpairByMac(const String& macStr);
 
-  // Auto‑index helpers (first free slot, with NVS cursor)
+  // Auto-index helpers (first free slot, with NVS cursor)
   bool pairRelayAuto(const String& macStr, uint8_t* outIdx=nullptr);
   bool pairPresenceAuto(const String& macStr, uint8_t* outIdx=nullptr);
 
   // WiFiManager helpers (CRUD/housekeeping)
   bool pair(const String& mac, const String& type);          // "power", "relay"/"relayN", "sensor"/"sensorN", "entrance", "parking"
   bool removePeer(const String& mac) { return unpairByMac(mac); }
-  void removeAllPeers();                                     // clear peers in esp‑now (RAM only)
+  void removeAllPeers();                                     // clear peers in esp-now (RAM only)
   void clearAll();                                           // also clear NVS MAC+token+mode+channel+topology
 
-public:  // ============================ TOPOLOGY ============================
-  // Program links
-  bool topoSetRelayNext(uint8_t relayIdx, const uint8_t nextMac[6], uint32_t nextIPv4);
-  bool topoSetSensorDependency(uint8_t sensIdx, uint8_t targetRelayIdx, const uint8_t targetMac[6], uint32_t targetIPv4);
-  bool topoSetRelayPrevFromSensor(uint8_t relayIdx, uint8_t sensIdx, const uint8_t sensMac[6]); // reverse link (derived)
-  bool topoClearPeer(ModuleType t, uint8_t idx);
-  bool configureTopology(const JsonVariantConst& links);     // array of link objects; live push enabled
-
-  // Push topology token/IP bundles derived from in‑RAM mirrors
-  bool topoPushRelay(uint8_t relayIdx);
-  bool topoPushSensor(uint8_t sensIdx);
-  bool topoPushAll();
-
+public:  // ============================ TOPOLOGY (NEW-ONLY) ============================
   // Channel orchestration across the mesh
   bool orchestrateChannelChange(uint8_t newCh, uint8_t delay_s=2, uint8_t window_s=2, bool persist=true);
 
+  // === Zero-centered model (sensor-centric) ===
+  bool topoSetSensorNeighbors(uint8_t sensIdx,
+                              bool hasPrev, uint8_t prevIdx, const uint8_t prevMac[6],
+                              bool hasNext, uint8_t nextIdx, const uint8_t nextMac[6]);
+
+  bool topoSetSensorRelaysZeroCentered(uint8_t sensIdx,
+                                       const ZcRelEntry* negList, uint8_t nNeg,
+                                       const ZcRelEntry* posList, uint8_t nPos);
+
+  bool topoSetRelayBoundaries(uint8_t relayIdx,
+                              bool hasA, uint8_t aIdx, const uint8_t aMac[6],
+                              bool hasB, uint8_t bIdx, const uint8_t bMac[6],
+                              uint8_t splitRule = SPLIT_RULE_MAC_ASC_IS_POS_LEFT);
+
+  // Push to devices (new-only)
+  bool topoPushZeroCenteredSensor(uint8_t sensIdx);
+  bool topoPushBoundaryRelay(uint8_t relayIdx);
+  bool topoPushAllZeroCentered();
+
   // Query / serialize
   String serializePeers() const;                             // peers + mode/channel + online
-  String serializeTopology() const;                          // current links (prev/next)
+  String serializeTopology() const;                          // new-only zc/boundaries
   String exportConfiguration() const;                        // peers + topology + ch/mode (PSRAM buffer if large)
   String getEntranceSensorMac() const;                       // "" if not set
+
+  // Accept new-only topology JSON and persist
+  bool configureTopology(const JsonVariantConst& topo);
 
 public:  // ============================ SEQUENCE CONTROL ============================
   bool sequenceStart(SeqDir dir);
   bool sequenceStop();
   bool startSequence(const String& anchor, bool up);         // advisory anchor; broadcast anyway
 
-public:  // ============================ STATIC UTILS ============================
-  // (left intentionally empty; see above for mac helpers)
-
 private: // ============================ NVS KEY HELPERS ============================
   String keyMd() const   { return ESPNOW_MD_KEY; }           // system mode
   String keyCh() const   { return ESPNOW_CH_KEY; }           // channel
   String keyTok(ModuleType t, uint8_t index);                // <=6
   String keyMac(ModuleType t, uint8_t index);                // <=6
-  String keyTopo() const { return String("TOPOLJ"); }       // topology JSON blob
-  String keyRNext()const { return String("RLNEXT"); }       // next relay index hint
-  String keySNext()const { return String("SNNEXT"); }       // next sensor index hint
-  String keyCtr() const  { return String("CNTTOK"); }       // token counter
+  String keyTopo() const { return String("TOPOLJ"); }        // topology JSON blob
+  String keyRNext()const { return String("RLNEXT"); }        // next relay index hint
+  String keySNext()const { return String("SNNEXT"); }        // next sensor index hint
+  String keyCtr() const  { return String("CNTTOK"); }        // token counter
 
 private: // ============================ PEER/TOKEN INTERNALS ============================
   // Peer table helpers
@@ -209,7 +225,7 @@ private: // ============================ PEER/TOKEN INTERNALS ==================
   bool loadOrCreateToken(ModuleType t, uint8_t index, const String& macStr, String& tokenHexOut, uint8_t token16Out[16]);
   uint32_t takeAndBumpTokenCounter();
 
-  // Convenience power helpers used by high‑level API (same semantics)
+  // Convenience power helpers used by high-level API (same semantics)
   bool requestPowerStatus(bool requireAck=true);
   bool powerOn(bool requireAck=true);
   bool powerOff(bool requireAck=true);
@@ -246,7 +262,7 @@ private: // ============================ FRAME / SEND QUEUE ====================
   void   freePending(int idx);
   int    findPendingForPeer(const uint8_t mac[6]);
 
-private: // ============================ ESP‑NOW CALLBACKS ============================
+private: // ============================ ESP-NOW CALLBACKS ============================
   static void onRecvThunk(const uint8_t *mac, const uint8_t *data, int len);
   static void onSentThunk(const uint8_t *mac, esp_now_send_status_t status);
   void onRecv(const uint8_t *mac, const uint8_t *data, int len);
@@ -259,7 +275,6 @@ private: // ============================ SMALL HELPERS & TOPO PERSIST ==========
   void reAddAllPeersOnChannel();
   uint8_t nextFreeRelayIndex() const;
   uint8_t nextFreeSensorIndex() const;
-  void    rebuildReverseLinks();              // set relay.prev from sensor deps
   bool    saveTopologyToNvs() const;
   bool    loadTopologyFromNvs();
 
@@ -279,11 +294,9 @@ private: // ============================ STATE ============================
   PeerRec  _entrance; // special
   PeerRec  _parking;  // special
 
-  // Topology mirrors
-  RelayLink _relayTopo[ICM_MAX_RELAYS];
-  SensorDep _sensorTopo[ICM_MAX_SENSORS];
-  SensorDep _entrTopo;   // entrance
-  SensorDep _parkTopo;   // parking
+  // New mirrors (sensor-centric model)
+  ZcSensorMirror      _zcSensors[ICM_MAX_SENSORS+2];   // +2 for FE/FF if you keep specials
+  RelayBoundaryMirror _boundaries[ICM_MAX_RELAYS];
 
   // Send queue config/state
   PendingTx _pending[MAX_PENDING];
@@ -317,7 +330,7 @@ private: // ============================ STATE ============================
   float    _relTempC[ICM_MAX_RELAYS] = { NAN };
   uint32_t _relTempMs[ICM_MAX_RELAYS] = { 0 };
 
-  // Specials: entrance/parking day‑night caches
+  // Specials: entrance/parking day-night caches
   int8_t   _entrDNFlag = -1; uint32_t _entrDNMs = 0;
   int8_t   _parkDNFlag = -1; uint32_t _parkDNMs = 0;
 

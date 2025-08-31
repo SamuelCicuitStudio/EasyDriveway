@@ -625,11 +625,23 @@ void WiFiManager::hTopoSet(AsyncWebServerRequest* req, uint8_t* data, size_t len
 }
 
 void WiFiManager::hTopoGet(AsyncWebServerRequest* req) {
-    DynamicJsonDocument d(65536);
-    String topo = _esn ? _esn->serializeTopology() : "{\"links\":[]}";
-    if (!deserializeJson(d, topo)) sendJSON(req, d);
-    else sendError(req, "Topology serialization error", 500);
+  DynamicJsonDocument d(65536);
+  String topo = _esn ? _esn->serializeTopology()
+                     : "{\"links\":{\"zc\":[],\"boundaries\":[]}}";
+  if (deserializeJson(d, topo)) { sendError(req, "Topology serialization error", 500); return; }
+
+  JsonVariantConst root = d.as<JsonVariantConst>();
+  if (!root.isNull() && (root.containsKey("zc") || root.containsKey("boundaries")) && !root.containsKey("links")) {
+    DynamicJsonDocument out(65536);
+    JsonObject links = out.createNestedObject("links");
+    if (root.containsKey("zc"))         links["zc"]         = root["zc"];
+    if (root.containsKey("boundaries")) links["boundaries"] = root["boundaries"];
+    sendJSON(req, out);
+    return;
+  }
+  sendJSON(req, d);
 }
+
 
 /* ==================== Sequences (stubs) ==================== */
 void WiFiManager::hSeqStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
