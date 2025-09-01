@@ -1,10 +1,8 @@
-/*! ICM Topology Binder (rewritten 2025-08-28)
- * - Full refresh of peers/topology builder
- * - Power panel wired to backend:
- *      GET  /api/power/info
- *      POST /api/power/cmd  { pwr_action: "on"|"off"|"status"|"refresh" }
- * - Live gauges for V / A / °C with auto-refresh while Power panel is selected
- * - Uses lowercase verbs in JSON (backend accepts pwr_action and action)
+/*! ICM Topology UI — unified 1s live polling on selection
+ *  - Polls POWER, SENSOR/ENTRANCE/PARKING, or RELAY every 1s while selected
+ *  - Stops when nothing is selected
+ *  - Click anywhere outside selectable elements to unselect
+ *  - Refresh button reloads paired devices
  */
 (() => {
   "use strict";
@@ -47,9 +45,14 @@
   const siDN = $("siDN");
   const siRelState = $("siRelState");
 
+  const siHum = $("siHum"),
+    siPress = $("siPress"),
+    siLux = $("siLux"),
+    siTfA = $("siTfA"),
+    siTfB = $("siTfB");
+
   const tOn = $("tOn"),
-    tOff = $("tOff"),
-    tRead = $("tRead");
+    tOff = $("tOff");
 
   const pwrOnBtn = $("pwrOn"),
     pwrOffBtn = $("pwrOff");
@@ -69,33 +72,68 @@
       f.submit();
     });
   }
+  // ---------- Limits (tweak to taste) ----------
+  const LIMITS = {
+    tempC: { warn: 40, danger: 60 }, // sensor temp
+    humidity: { warn: 70, danger: 85 }, // %
+    pressure_hPa: {
+      warnLow: 980,
+      warnHigh: 1030, // ambient band
+      dangerLow: 960,
+      dangerHigh: 1040,
+    },
+    vbus_V: {
+      warnLow: 22,
+      warnHigh: 28, // 24V nominal
+      dangerLow: 20,
+      dangerHigh: 30,
+    },
+    ibus_A: { warn: 4.0, danger: 6.0 }, // current
+    pwrTempC: { warn: 60, danger: 80 }, // PSU temp
+  };
+
+  // ---------- Class helpers ----------
+  function setStateClass(el, level) {
+    if (!el) return;
+    el.classList.remove("state-ok", "state-warn", "state-danger");
+    if (level) el.classList.add(`state-${level}`);
+  }
+  // One-sided thresholds (only high side matters)
+  function levelHi(v, warn, danger) {
+    if (!Number.isFinite(v)) return null;
+    if (v >= danger) return "danger";
+    if (v >= warn) return "warn";
+    return "ok";
+  }
+  // Two-sided band thresholds (low/high)
+  function levelBand(v, { warnLow, warnHigh, dangerLow, dangerHigh }) {
+    if (!Number.isFinite(v)) return null;
+    if (v <= dangerLow || v >= dangerHigh) return "danger";
+    if (v <= warnLow || v >= warnHigh) return "warn";
+    return "ok";
+  }
 
   // ------------------------ MAC helpers ------------------------
-  function macNormalize12(s) {
-    return String(s || "")
+  const macNormalize12 = (s) =>
+    String(s || "")
       .replace(/[^0-9a-f]/gi, "")
       .toUpperCase()
       .slice(0, 12);
-  }
+
   function macFormatColon(s12) {
     const h = macNormalize12(s12);
     return h.match(/.{1,2}/g)?.join(":") ?? "";
   }
-  function macIsCompleteColon(s) {
-    return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(s);
-  }
-  function macEqual(a, b) {
-    return macNormalize12(a) === macNormalize12(b);
-  }
+  const macIsCompleteColon = (s) => /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(s);
+  const macEqual = (a, b) => macNormalize12(a) === macNormalize12(b);
+
   function bindMacFormatter(inputEl) {
     if (!inputEl) return;
     inputEl.setAttribute("maxlength", "17");
     inputEl.setAttribute("autocomplete", "off");
     inputEl.setAttribute("spellcheck", "false");
     inputEl.placeholder = "AA:BB:CC:DD:EE:FF";
-    const fmt = () => {
-      inputEl.value = macFormatColon(inputEl.value);
-    };
+    const fmt = () => (inputEl.value = macFormatColon(inputEl.value));
     inputEl.addEventListener("input", fmt);
     inputEl.addEventListener("blur", fmt);
     inputEl.addEventListener("paste", (e) => {
@@ -119,7 +157,11 @@
     el.style.setProperty("--max", hi.toString());
     el.style.setProperty("--pct", pct.toString());
     el.innerHTML = `<div class="value">${
-      Number.isFinite(v) ? v.toFixed(unit === "V" || unit === "A" ? 1 : 0) : "—"
+      Number.isFinite(v)
+        ? unit === "V" || unit === "A"
+          ? v.toFixed(1)
+          : v.toFixed(0)
+        : "—"
     }<small>${unit ? " " + unit : ""}</small></div>`;
   }
 
@@ -132,12 +174,13 @@
   }
 
   // ------------------------ State ------------------------
-  let bricks = []; // [{id, kind:'ENTRANCE'|'RELAY'|'PARKING'|'SENSOR', mac:'AA:..'}]
+  let bricks = []; // [{id, kind, mac}]
   let brickSeq = 1;
   let selectedId = null; // selected chain brick id
   let selectedPeer = null; // {type, mac} when selection comes from peers (incl. POWER)
-  let peers = []; // from /api/peers/list
-  let pwrTimer = null; // interval for power auto refresh
+  let peers = []; // /api/peers/list
+  let pollTimer = null; // unified 1s polling timer
+  let pollTarget = null; // {kindUp, mac}
 
   const KIND_UP = (t) => String(t || "").toUpperCase();
   const kindLabel = (k) =>
@@ -158,18 +201,40 @@
     }[k] || k);
   const isChainPlaceable = (kindUp) =>
     ["ENTRANCE", "RELAY", "PARKING", "SENSOR"].includes(KIND_UP(kindUp));
-  const hasKindInChain = (kindUp) =>
-    bricks.some((b) => KIND_UP(b.kind) === KIND_UP(kindUp));
 
   // ------------------------ Toast ------------------------
   const showToast = (msg) => {
     if (!toast) return;
     toast.textContent = msg || "OK";
     toast.hidden = false;
-    setTimeout(() => (toast.hidden = true), 1500);
+    setTimeout(() => (toast.hidden = true), 1400);
   };
 
-  // ------------------------ Auto-scroll helpers ------------------------
+  // ------------------------ Global selection/unselection ------------------------
+  function unselectAll() {
+    selectedId = null;
+    selectedPeer = null;
+    document
+      .querySelectorAll(".brick.selected")
+      .forEach((e) => e.classList.remove("selected"));
+    document
+      .querySelectorAll(".pill.selected")
+      .forEach((e) => e.classList.remove("selected"));
+    clearPeerRowSelection();
+    clearSelectionPanel();
+    stopPolling();
+  }
+
+  // Click anywhere outside selectable things → unselect
+  document.addEventListener("click", (e) => {
+    const safe = e.target.closest(
+      // things that count as “inside a selection context”
+      ".brick, .pill, #peersTbl tbody tr, .card-selected, .card-palette, .card-chain, .card-peers, .card-pair"
+    );
+    if (!safe) unselectAll();
+  });
+
+  // ------------------------ Table/Palette selection helpers ------------------------
   function clearPeerRowSelection() {
     peersTbl
       ?.querySelectorAll("tbody tr")
@@ -185,9 +250,7 @@
       if (same) {
         tr.classList.add("selected");
         found = tr;
-      } else {
-        tr.classList.remove("selected");
-      }
+      } else tr.classList.remove("selected");
     });
     if (found && peersScroll)
       found.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -199,13 +262,11 @@
       const m = pill
         .querySelector(".pill-mac")
         ?.textContent?.trim()
-        .toUpperCase();
+        ?.toUpperCase();
       if (m === macFmt) {
         pill.classList.add("selected");
         found = pill;
-      } else {
-        pill.classList.remove("selected");
-      }
+      } else pill.classList.remove("selected");
     });
     if (found) found.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
@@ -221,19 +282,44 @@
       });
   }
 
-  // ------------------------ Selection panel ------------------------
-  function ensurePwrTimer(enable) {
-    if (pwrTimer) {
-      clearInterval(pwrTimer);
-      pwrTimer = null;
+  // ------------------------ Unified polling ------------------------
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
-    if (enable) {
-      pwrTimer = setInterval(() => {
-        readPower().catch(() => {});
-      }, 3000);
-    }
+    pollTarget = null;
   }
 
+  function startPolling(kindUp, mac) {
+    stopPolling();
+    if (!macIsCompleteColon(mac)) return;
+
+    pollTarget = { kindUp: KIND_UP(kindUp), mac: macFormatColon(mac) };
+
+    const tick = async () => {
+      if (!pollTarget) return;
+      const t = pollTarget.kindUp;
+      if (t === "POWER") {
+        await readPower().catch(() => {});
+      } else if (t === "RELAY") {
+        // If a relay info endpoint exists, call it here.
+        // For mock/demo, lightly animate the relay temp gauge and keep last state text.
+        const base = Number(siRelState.textContent === "ON" ? 36 : 26);
+        setGauge(gRelTemp, base + Math.random() * 4, -20, 100, "°C");
+      } else if (t === "SENSOR" || t === "ENTRANCE" || t === "PARKING") {
+        await readSensor({ mac: pollTarget.mac, type: t.toLowerCase() }).catch(
+          () => {}
+        );
+      }
+    };
+
+    // immediate tick + 1s interval
+    tick();
+    pollTimer = setInterval(tick, 1000);
+  }
+
+  // ------------------------ Selection panel ------------------------
   function updateSelectionPanel(kindUp, mac) {
     siKind.textContent = kindLabel(kindUp);
     siMac.textContent = macFormatColon(mac) || "—";
@@ -244,38 +330,40 @@
       panelSensor.hidden = false;
       setGauge(gSensTemp, 0, -20, 80, "°C");
       renderDayNight(undefined);
-      ensurePwrTimer(false);
     } else if (kindUp === "RELAY") {
       panelRelay.hidden = false;
       setGauge(gRelTemp, 0, -20, 100, "°C");
-      ensurePwrTimer(false);
+      siRelState.textContent = siRelState.textContent || "OFF";
     } else if (kindUp === "POWER") {
       panelPower.hidden = false;
-      // Start live power refresh
       setGauge(gPwrVolt, 0, 0, 60, "V");
       setGauge(gPwrCurr, 0, 0, 10, "A");
       setGauge(gPwrTemp, 0, 0, 100, "°C");
-      readPower().catch(() => {});
-      ensurePwrTimer(true);
-    } else {
-      ensurePwrTimer(false);
     }
 
     selNone.hidden = true;
     selInfo.hidden = false;
+    showTypeMac(true); // <— make Type/MAC visible when selected
+    // Start 1s polling for the selected thing
+    startPolling(kindUp, mac);
+  }
+  // Hide/show the whole Type & MAC blocks (their .kv wrappers)
+  function showTypeMac(show) {
+    const wrap = (el) => el?.closest?.(".kv") || el?.parentElement || null;
+    const kindWrap = wrap(siKind);
+    const macWrap = wrap(siMac);
+    if (kindWrap) kindWrap.style.display = show ? "" : "none";
+    if (macWrap) macWrap.style.display = show ? "" : "none";
   }
 
   function clearSelectionPanel() {
     selInfo.hidden = true;
     selNone.hidden = false;
-    clearPeerRowSelection();
-    document
-      .querySelectorAll(".pill.selected")
-      .forEach((el) => el.classList.remove("selected"));
-    ensurePwrTimer(false);
+    panelSensor.hidden = panelRelay.hidden = panelPower.hidden = true;
+    showTypeMac(false); // <— hide the Type/MAC row entirely
   }
 
-  // ------------------------ Lane (chain) rendering ------------------------
+  // ------------------------ Lane (chain) rendering & DnD ------------------------
   function redrawLane() {
     lane.innerHTML = "";
     if (!bricks.length) {
@@ -305,7 +393,10 @@
       el.appendChild(title);
       el.title = macDisp || "";
 
-      el.addEventListener("click", () => selectBrick(b.id));
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation(); // prevent global unselect
+        selectBrick(b.id);
+      });
       el.addEventListener("dragstart", (ev) => {
         ev.dataTransfer.setData("text/icm-brick", String(b.id));
         ev.dataTransfer.effectAllowed = "move";
@@ -345,7 +436,7 @@
     if (el) el.classList.add("selected");
 
     if (!b) {
-      clearSelectionPanel();
+      unselectAll();
       return;
     }
     updateSelectionPanel(KIND_UP(b.kind), b.mac);
@@ -418,11 +509,14 @@
           showToast("Already in chain");
           return;
         }
-        if (typeUp === "ENTRANCE" && hasKindInChain("ENTRANCE")) {
+        if (
+          typeUp === "ENTRANCE" &&
+          bricks.some((b) => b.kind === "ENTRANCE")
+        ) {
           showToast("Only one Entrance allowed");
           return;
         }
-        if (typeUp === "PARKING" && hasKindInChain("PARKING")) {
+        if (typeUp === "PARKING" && bricks.some((b) => b.kind === "PARKING")) {
           showToast("Only one Parking allowed");
           return;
         }
@@ -433,23 +527,21 @@
         });
         redrawLane();
         renderPalette(); // update used/unused
-      } catch (e) {}
+      } catch {}
     }
   });
 
-  btnClear?.addEventListener("click", () => {
+  btnClear?.addEventListener("click", (e) => {
+    e.stopPropagation();
     bricks = [];
-    selectedId = null;
-    selectedPeer = null;
+    unselectAll();
     redrawLane();
-    clearSelectionPanel();
     renderPalette();
   });
 
   // ------------------------ Palette (grouped) ------------------------
-  function isUsed(mac) {
-    return bricks.some((b) => macEqual(b.mac, mac));
-  }
+  const isUsed = (mac) => bricks.some((b) => macEqual(b.mac, mac));
+
   function makePill(p, titleText, cls) {
     const pill = document.createElement("button");
     pill.className = "pill " + cls;
@@ -463,7 +555,8 @@
       );
       ev.dataTransfer.effectAllowed = "copy";
     });
-    pill.addEventListener("click", () => {
+    pill.addEventListener("click", (ev) => {
+      ev.stopPropagation();
       selectedId = null;
       selectedPeer = { type: p.type, mac: fullMac };
       updateSelectionPanel(KIND_UP(p.type), fullMac);
@@ -569,19 +662,24 @@
         const bOff = document.createElement("button");
         bOff.className = "btn";
         bOff.textContent = "OFF";
-        bOn.addEventListener("click", () =>
-          testRelay({ type: p.type, mac: macFormatColon(p.mac || "") })
-        );
-        bOff.addEventListener("click", () => stopSeq());
+        bOn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          testRelay({ type: p.type, mac: macFormatColon(p.mac || "") });
+        });
+        bOff.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          stopSeq();
+        });
         tdTest.appendChild(bOn);
         tdTest.appendChild(bOff);
       } else {
         const bRead = document.createElement("button");
         bRead.className = "btn";
         bRead.textContent = "Read";
-        bRead.addEventListener("click", () =>
-          readSensor({ type: p.type, mac: macFormatColon(p.mac || "") })
-        );
+        bRead.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          readSensor({ type: p.type, mac: macFormatColon(p.mac || "") });
+        });
         tdTest.appendChild(bRead);
       }
 
@@ -589,12 +687,14 @@
       const bRm = document.createElement("button");
       bRm.className = "btn danger";
       bRm.textContent = "X";
-      bRm.addEventListener("click", () =>
-        removePeer(macFormatColon(p.mac || ""))
-      );
+      bRm.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        removePeer(macFormatColon(p.mac || ""));
+      });
       tdR.appendChild(bRm);
 
-      tr.addEventListener("click", () => {
+      tr.addEventListener("click", (ev) => {
+        ev.stopPropagation();
         const macDisp = macFormatColon(p.mac || "");
         if (isChainPlaceable(p.type)) {
           const b = bricks.find((bb) => macEqual(bb.mac, macDisp));
@@ -620,9 +720,12 @@
   }
 
   peerSearch?.addEventListener("input", () => renderPeers());
-  btnRefreshPeers?.addEventListener("click", () =>
-    fetchPeers().catch(() => showToast("Peers refresh failed"))
-  );
+
+  // Refresh button: reload paired devices (list + palette)
+  btnRefreshPeers?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    fetchPeers().catch(() => showToast("Peers refresh failed"));
+  });
 
   async function pairPeer() {
     const mac = macFormatColon(pMac.value);
@@ -640,9 +743,10 @@
       fetchPeers().catch(() => {});
     }
   }
-  btnPair?.addEventListener("click", () =>
-    pairPeer().catch(() => showToast("Pair failed"))
-  );
+  btnPair?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pairPeer().catch(() => showToast("Pair failed"));
+  });
 
   async function removePeer(mac) {
     if (!confirm("Remove peer " + mac + " ?")) return;
@@ -654,299 +758,24 @@
     showToast(r.ok ? "Removed" : "Remove failed");
     if (r.ok) fetchPeers().catch(() => {});
   }
-  btnRemove?.addEventListener("click", () => {
+  btnRemove?.addEventListener("click", (e) => {
+    e.stopPropagation();
     const mac = macFormatColon(rMac.value);
     if (!macIsCompleteColon(mac)) return showToast("Invalid MAC");
     removePeer(mac);
   });
 
-  // ===== New Topology (zero-centered sensors + relay boundaries) builder =====
-  // Build index maps by MAC if backend provided idx fields in peers array.
-  const _idxByMac = {
-    relay: new Map(),
-    sensor: new Map(),
-    entrance: null,
-    parking: null,
-  };
-
-  function _refreshIndexMapsFromPeers() {
-    _idxByMac.relay.clear();
-    _idxByMac.sensor.clear();
-    _idxByMac.entrance = _idxByMac.parking = null;
-    // peers[] is a flat list; some entries may carry 'idx'
-    for (const p of peers || []) {
-      const type = String(p.type || "").toLowerCase();
-      const mac = macFormatColon(p.mac || "");
-      const idx = typeof p.idx === "number" ? p.idx : undefined;
-      if (!mac) continue;
-      if (type === "relay") {
-        if (idx !== undefined) _idxByMac.relay.set(mac, idx);
-      }
-      if (type === "sensor") {
-        if (idx !== undefined) _idxByMac.sensor.set(mac, idx);
-      }
-      if (type === "entrance") {
-        _idxByMac.entrance = {
-          mac,
-          idx: typeof p.idx === "number" ? p.idx : 254,
-        };
-      }
-      if (type === "parking") {
-        _idxByMac.parking = {
-          mac,
-          idx: typeof p.idx === "number" ? p.idx : 255,
-        };
-      }
-    }
-  }
-
-  const SENSORISH = new Set(["ENTRANCE", "PARKING", "SENSOR"]);
-  const isSensorish = (k) => SENSORISH.has(KIND_UP(k));
-
-  function _sensorIdxForBrick(b) {
-    const mac = macFormatColon(b.mac || "");
-    const k = KIND_UP(b.kind || "");
-    if (k === "ENTRANCE")
-      return _idxByMac.entrance ? _idxByMac.entrance.idx : 254;
-    if (k === "PARKING") return _idxByMac.parking ? _idxByMac.parking.idx : 255;
-    const idx = _idxByMac.sensor.get(mac);
-    return typeof idx === "number" ? idx : undefined;
-  }
-  function _relayIdxForMac(mac) {
-    const idx = _idxByMac.relay.get(macFormatColon(mac || ""));
-    return typeof idx === "number" ? idx : undefined;
-  }
-
-  function buildZC() {
-    _refreshIndexMapsFromPeers();
-    const zc = [];
-    const chain = bricks.filter((b) => isChainPlaceable(b.kind));
-    for (let i = 0; i < chain.length; i++) {
-      const b = chain[i];
-      if (!isSensorish(b.kind)) continue;
-      const meIdx = _sensorIdxForBrick(b);
-      const meMac = macFormatColon(b.mac);
-      const entry = {
-        sensIdx: meIdx,
-        mac: meMac,
-        hasPrev: false,
-        hasNext: false,
-        neg: [],
-        pos: [],
-      };
-
-      // find prev sensorish
-      for (let j = i - 1; j >= 0; j--) {
-        const L = chain[j];
-        if (isSensorish(L.kind)) {
-          entry.hasPrev = true;
-          entry.prevIdx = _sensorIdxForBrick(L);
-          entry.prevMac = macFormatColon(L.mac);
-          break;
-        }
-      }
-      // find next sensorish
-      for (let j = i + 1; j < chain.length; j++) {
-        const R = chain[j];
-        if (isSensorish(R.kind)) {
-          entry.hasNext = true;
-          entry.nextIdx = _sensorIdxForBrick(R);
-          entry.nextMac = macFormatColon(R.mac);
-          break;
-        }
-      }
-      // collect negative relays (left of me until prev sensorish)
-      let pos = -1;
-      for (let j = i - 1; j >= 0; j--) {
-        const L = chain[j];
-        if (isSensorish(L.kind)) break;
-        if (KIND_UP(L.kind) === "RELAY") {
-          const mac = macFormatColon(L.mac);
-          const idx = _relayIdxForMac(mac);
-          entry.neg.push({ relayIdx: idx, pos, relayMac: mac });
-          pos -= 1;
-        }
-      }
-      // collect positive relays (right of me until next sensorish)
-      pos = +1;
-      for (let j = i + 1; j < chain.length; j++) {
-        const R = chain[j];
-        if (isSensorish(R.kind)) break;
-        if (KIND_UP(R.kind) === "RELAY") {
-          const mac = macFormatColon(R.mac);
-          const idx = _relayIdxForMac(mac);
-          entry.pos.push({ relayIdx: idx, pos, relayMac: mac });
-          pos += 1;
-        }
-      }
-      zc.push(entry);
-    }
-    return zc;
-  }
-
-  function buildBoundaries() {
-    _refreshIndexMapsFromPeers();
-    const bounds = [];
-    const chain = bricks.filter((b) => isChainPlaceable(b.kind));
-    for (let i = 0; i < chain.length; i++) {
-      const b = chain[i];
-      if (KIND_UP(b.kind) !== "RELAY") continue;
-      const myMac = macFormatColon(b.mac);
-      const myIdx = _relayIdxForMac(myMac);
-      let A = null,
-        B = null;
-      // scan left for nearest sensorish
-      for (let j = i - 1; j >= 0; j--) {
-        if (isSensorish(chain[j].kind)) {
-          A = chain[j];
-          break;
-        }
-      }
-      // scan right for nearest sensorish
-      for (let j = i + 1; j < chain.length; j++) {
-        if (isSensorish(chain[j].kind)) {
-          B = chain[j];
-          break;
-        }
-      }
-      const o = { relayIdx: myIdx, splitRule: 0, hasA: false, hasB: false };
-      if (A) {
-        o.hasA = true;
-        o.aIdx = _sensorIdxForBrick(A);
-        o.aMac = macFormatColon(A.mac);
-      }
-      if (B) {
-        o.hasB = true;
-        o.bIdx = _sensorIdxForBrick(B);
-        o.bMac = macFormatColon(B.mac);
-      }
-      bounds.push(o);
-    }
-    return bounds;
-  }
-
-  function buildTopologyJson() {
-    const zc = buildZC();
-    const boundaries = buildBoundaries();
-    return { links: { zc, boundaries } };
-  }
-
-  // Reconstruct chain from new links (zc/boundaries) or legacy (array)
-  // Robust reconstructor: supports legacy array AND new links.{zc,boundaries}
-  // Works even if zc entries have no sensIdx/nextIdx and omit sensor 'mac'.
-
-  function reconstructChainFromLinks(links) {
-    try {
-      // Legacy format: { links: [{type,mac,prev?,next?}, ...] }
-      if (Array.isArray(links)) {
-        return links
-          .filter((l) => isChainPlaceable(l.type))
-          .map((l) => ({
-            id: brickSeq++,
-            kind: KIND_UP(l.type || "RELAY"),
-            mac: macFormatColon(l.mac || ""),
-          }));
-      }
-
-      // New format: { zc:[...], boundaries:[...] }
-      const zc = Array.isArray(links?.zc) ? links.zc : [];
-      if (!zc.length) return [];
-
-      // Build quick lookups
-      const byIdx = new Map();
-      const byPrevMac = new Map();
-      const byMac = new Map();
-      zc.forEach((s) => {
-        if (typeof s?.sensIdx === "number") byIdx.set(s.sensIdx, s);
-        if (s?.prevMac) byPrevMac.set(macFormatColon(s.prevMac), s);
-        if (s?.mac) byMac.set(macFormatColon(s.mac), s);
-      });
-
-      // Start at first item without prev (or the first item)
-      let curZ = zc.find((s) => s && !s.hasPrev) || zc[0];
-      if (!curZ) return [];
-
-      // Anchor MACs from paired peers (if we have them)
-      const macE = _idxByMac.entrance?.mac || "";
-      const macP = _idxByMac.parking?.mac || "";
-
-      const chain = [];
-      const addRelay = (m) =>
-        chain.push({
-          id: brickSeq++,
-          kind: "RELAY",
-          mac: macFormatColon(m || ""),
-        });
-
-      // Prepend relay bricks left of start (reverse order -k..-1)
-      if (Array.isArray(curZ.neg)) {
-        for (let i = curZ.neg.length - 1; i >= 0; --i)
-          addRelay(curZ.neg[i].relayMac);
-      }
-
-      // Walk forward sensor-by-sensor
-      while (curZ) {
-        // Choose kind from sensIdx anchors
-        let kind = "SENSOR";
-        if (typeof curZ.sensIdx === "number") {
-          if (curZ.sensIdx === 254) kind = "ENTRANCE";
-          else if (curZ.sensIdx === 255) kind = "PARKING";
-        }
-
-        // Derive a mac for this sensor (may be absent in file)
-        let sMac = "";
-        if (kind === "ENTRANCE" && macE) sMac = macE;
-        else if (kind === "PARKING" && macP) sMac = macP;
-        else
-          sMac = macFormatColon(curZ.mac || curZ.nextMac || curZ.prevMac || "");
-
-        chain.push({ id: brickSeq++, kind, mac: sMac });
-
-        // Append relays to the right (+1..+k)
-        if (Array.isArray(curZ.pos))
-          curZ.pos.forEach((e) => addRelay(e.relayMac));
-
-        // Find next sensor entry:
-        // 1) prefer index-based hop
-        let nextZ = null;
-        if (typeof curZ.nextIdx === "number")
-          nextZ = byIdx.get(curZ.nextIdx) || null;
-        // 2) if nextMac is explicitly provided, use it to find the node by MAC
-        if (!nextZ && curZ.nextMac)
-          nextZ = byMac.get(macFormatColon(curZ.nextMac)) || null;
-        // 3) else hop by neighbor relation: the node whose prevMac equals this node's mac
-        if (!nextZ && (curZ.mac || sMac))
-          nextZ = byPrevMac.get(macFormatColon(curZ.mac || sMac)) || null;
-        if (!nextZ) break;
-
-        curZ = nextZ;
-      }
-
-      return chain;
-    } catch (e) {
-      console.warn("reconstructChainFromLinks error:", e);
-      return [];
-    }
-  }
-  // ------------------------ Build & persist topology ------------------------
-  // [legacy] buildLinks kept for backwards export (chain only)
+  // ------------------------ Topology build/save ------------------------
   function buildLinks() {
-    return bricks
-      .filter((b) => isChainPlaceable(b.kind))
-      .map((b, i) => {
-        const prev = bricks[i - 1];
-        const next = bricks[i + 1];
-        const o = { type: b.kind, mac: macFormatColon(b.mac) };
-        if (prev && isChainPlaceable(prev.kind))
-          o.prev = { type: prev.kind, mac: macFormatColon(prev.mac) };
-        if (next && isChainPlaceable(next.kind))
-          o.next = { type: next.kind, mac: macFormatColon(next.mac) };
-        return o;
-      });
-  }
-
-  function hasAtLeastOnePower() {
-    return peers.some((p) => String(p.type).toLowerCase() === "power");
+    const chain = bricks.filter((b) => isChainPlaceable(b.kind));
+    return chain.map((b, i) => {
+      const prev = chain[i - 1],
+        next = chain[i + 1];
+      const o = { type: b.kind, mac: macFormatColon(b.mac) };
+      if (prev) o.prev = { type: prev.kind, mac: macFormatColon(prev.mac) };
+      if (next) o.next = { type: next.kind, mac: macFormatColon(next.mac) };
+      return o;
+    });
   }
 
   async function loadFromDevice() {
@@ -956,52 +785,62 @@
       return;
     }
     const j = await r.json();
+    let arr = [];
+    if (Array.isArray(j.links)) arr = j.links;
+    else if (j && Array.isArray(j)) arr = j;
+    else if (j && j.links && j.links.links && Array.isArray(j.links.links))
+      arr = j.links.links; // tolerant
     brickSeq = 1;
-    let chain = [];
-    if (Array.isArray(j.links)) {
-      chain = reconstructChainFromLinks(j.links);
-    } else if (
-      j &&
-      j.links &&
-      (Array.isArray(j.links.zc) || Array.isArray(j.links.boundaries))
-    ) {
-      chain = reconstructChainFromLinks(j.links);
-    }
-    bricks = chain;
-    selectedId = null;
-    selectedPeer = null;
+    bricks = (arr || [])
+      .filter((l) => isChainPlaceable(l.type))
+      .map((l) => ({
+        id: brickSeq++,
+        kind: KIND_UP(l.type || "RELAY"),
+        mac: macFormatColon(l.mac || ""),
+      }));
+    unselectAll();
     redrawLane();
-    clearSelectionPanel();
     showToast("Loaded");
     renderPalette();
   }
-  btnLoad?.addEventListener("click", () =>
-    loadFromDevice().catch(() => showToast("Load failed"))
-  );
+  btnLoad?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    loadFromDevice().catch(() => showToast("Load failed"));
+  });
+
+  function hasAtLeastOnePower() {
+    return peers.some((p) => String(p.type).toLowerCase() === "power");
+  }
 
   async function saveToDevice(pushAlso = false) {
     if (!hasAtLeastOnePower()) {
       showToast("Pair at least one Power module first");
       return;
     }
-    const topo = buildTopologyJson();
+    const payload = {
+      links: buildLinks(),
+      ...(pushAlso ? { push: true } : {}),
+    };
     const r = await fetch("/api/topology/set", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(pushAlso ? { ...topo, push: true } : topo),
+      body: JSON.stringify(payload),
     });
     showToast(r.ok ? (pushAlso ? "Saved & pushed" : "Saved") : "Save failed");
   }
-  btnSave?.addEventListener("click", () =>
-    saveToDevice(false).catch(() => showToast("Save failed"))
-  );
-  btnPush?.addEventListener("click", () =>
-    saveToDevice(true).catch(() => showToast("Push failed"))
-  );
+  btnSave?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    saveToDevice(false).catch(() => showToast("Save failed"));
+  });
+  btnPush?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    saveToDevice(true).catch(() => showToast("Push failed"));
+  });
 
   // Export/import
-  btnExport?.addEventListener("click", () => {
-    const obj = buildTopologyJson();
+  btnExport?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const obj = { links: buildLinks() };
     const blob = new Blob([JSON.stringify(obj, null, 2)], {
       type: "application/json",
     });
@@ -1015,77 +854,40 @@
   fileImport?.addEventListener("change", () => {
     const f = fileImport.files[0];
     if (!f) return;
-
     const rd = new FileReader();
     rd.onload = () => {
       try {
         const j = JSON.parse(rd.result);
-
-        // 1) Normalize to a "links" payload (legacy/new/bare/export)
-        let linksIn = null;
-        if (Array.isArray(j)) {
-          // bare legacy array
-          linksIn = j;
-        } else if (Array.isArray(j?.links)) {
-          // legacy wrapper: { links: [...] }
-          linksIn = j.links;
-        } else if (j?.links?.zc || j?.links?.boundaries) {
-          // new wrapper: { links: { zc:[], boundaries:[] } }
-          linksIn = j.links;
-        } else if (j?.zc || j?.boundaries) {
-          // bare new object: { zc:[], boundaries:[] }
-          linksIn = { zc: j.zc || [], boundaries: j.boundaries || [] };
-        } else if (
-          j?.topology?.links ||
-          j?.topology?.zc ||
-          j?.topology?.boundaries
-        ) {
-          // full export blob
-          const t = j.topology;
-          linksIn = t.links || {
-            zc: t.zc || [],
-            boundaries: t.boundaries || [],
-          };
-        }
-
-        if (!linksIn) {
+        let arr = null;
+        if (Array.isArray(j)) arr = j;
+        else if (Array.isArray(j?.links)) arr = j.links;
+        else if (j?.links?.links && Array.isArray(j.links.links))
+          arr = j.links.links;
+        if (!arr) {
           showToast("Invalid file (no links)");
           return;
         }
-
-        // 2) Refresh peer index maps so we can fill anchor MACs if missing
-        try {
-          _refreshIndexMapsFromPeers && _refreshIndexMapsFromPeers();
-        } catch (_) {}
-
-        // 3) Reconstruct lane from links (supports both legacy & new formats)
         brickSeq = 1;
-        const chain = reconstructChainFromLinks(linksIn);
-
-        if (!Array.isArray(chain) || chain.length === 0) {
-          showToast("Invalid topology (empty chain)");
-          return;
-        }
-
-        // 4) Apply to UI
-        bricks = chain;
-        selectedId = null;
-        selectedPeer = null;
+        bricks = arr
+          .filter((l) => isChainPlaceable(l.type))
+          .map((l) => ({
+            id: brickSeq++,
+            kind: KIND_UP(l.type || "RELAY"),
+            mac: macFormatColon(l.mac || ""),
+          }));
+        unselectAll();
         redrawLane();
-        clearSelectionPanel();
         renderPalette();
         showToast("Imported (not saved)");
-      } catch (e) {
-        console.warn("Import parse error:", e);
+      } catch {
         showToast("Parse error");
       }
     };
-
     rd.readAsText(f);
     fileImport.value = "";
   });
 
-  // ------------------------ Selected actions ------------------------
+  // ------------------------ Actions (Relay & Power) ------------------------
   async function testRelay(peerLike) {
     const start = macFormatColon(peerLike.mac || "");
     if (!macIsCompleteColon(start)) return showToast("Missing MAC");
@@ -1096,16 +898,36 @@
     });
     showToast("Relay test ON");
     siRelState.textContent = "ON";
-    setGauge(gRelTemp, 35 + Math.random() * 10, -20, 100, "°C");
   }
   async function stopSeq() {
     await fetch("/api/sequence/stop", { method: "POST" });
     showToast("Relay OFF");
     siRelState.textContent = "OFF";
-    setGauge(gRelTemp, 25 + Math.random() * 5, -20, 100, "°C");
   }
 
-  // ------------------------ API: day/night ------------------------
+  // Relay toolbar
+  tOn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    let target = null;
+    if (selectedId != null) {
+      const b = bricks.find((x) => x.id === selectedId);
+      if (b) target = peers.find((pp) => macEqual(pp.mac || "", b.mac || ""));
+    }
+    if (
+      !target &&
+      selectedPeer &&
+      String(selectedPeer.type).toLowerCase() === "relay"
+    )
+      target = selectedPeer;
+    if (target) testRelay(target);
+    else showToast("Select a relay");
+  });
+  tOff?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    stopSeq();
+  });
+
+  // ------------------------ Sensors (day/night + env + tfraw; mock fallbacks) ------------------------
   async function readDayNight(peerLike) {
     const mac = macFormatColon(peerLike?.mac || "");
     if (!macIsCompleteColon(mac)) {
@@ -1118,27 +940,123 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mac }),
       });
-      if (!r.ok) throw new Error("dn read failed");
-      const j = await r.json(); // expect { ok:true, is_day:0|1 }
+      if (!r.ok) throw new Error();
+      const j = await r.json();
       const isDay =
-        j && typeof j.is_day === "number" ? (j.is_day ? 1 : 0) : undefined;
+        typeof j?.is_day === "number" ? (j.is_day ? 1 : 0) : undefined;
       renderDayNight(isDay);
-    } catch (e) {
+    } catch {
       renderDayNight(undefined);
     }
   }
 
+  function putText(idEl, text) {
+    if (idEl) idEl.textContent = text;
+  }
+
   async function readSensor(peerLike) {
-    showToast("Sensor read requested");
-    siSensStatus.textContent = "OK";
-    setGauge(gSensTemp, 20 + Math.floor(Math.random() * 10), -20, 80, "°C");
-    await readDayNight(peerLike);
+    const mac = macFormatColon(peerLike?.mac || "");
+    if (!macIsCompleteColon(mac)) {
+      siSensStatus.textContent = "—";
+      return;
+    }
+
+    siSensStatus.textContent = "…";
+
+    // Preferred: /api/sensor/env
+    let env = null,
+      gotIsDay = undefined;
+    try {
+      const r = await fetch("/api/sensor/env", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mac }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        env = j || {};
+        if (typeof j?.is_day === "number") gotIsDay = j.is_day ? 1 : 0;
+      } else throw new Error();
+    } catch {
+      // Fallback: /api/sensor/read (mock)
+      try {
+        const rf = await fetch("/api/sensor/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mac }),
+        });
+        if (rf.ok) {
+          const jf = await rf.json();
+          env = {
+            tC: typeof jf?.tempC === "number" ? jf.tempC : undefined,
+            rh: typeof jf?.humidity === "number" ? jf.humidity : undefined,
+            p_Pa:
+              typeof jf?.pressure_hPa === "number"
+                ? Math.round(jf.pressure_hPa * 100)
+                : undefined,
+            lux: jf?.lux,
+            tf_a: jf?.tf_a,
+            tf_b: jf?.tf_b,
+          };
+        }
+      } catch {}
+    }
+
+    // TF raw: try /api/sensor/tfraw; fallback to env.tf_a/tf_b or /api/sensor/read
+    let tfA, tfB;
+    try {
+      const r = await fetch("/api/sensor/tfraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mac, which: 2 }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        tfA = typeof j?.distA_mm === "number" ? j.distA_mm : tfA;
+        tfB = typeof j?.distB_mm === "number" ? j.distB_mm : tfB;
+      } else throw new Error();
+    } catch {
+      if (typeof env?.tf_a === "number") tfA = env.tf_a;
+      if (typeof env?.tf_b === "number") tfB = env.tf_b;
+      if (tfA === undefined || tfB === undefined) {
+        try {
+          const rf = await fetch("/api/sensor/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mac }),
+          });
+          if (rf.ok) {
+            const jf = await rf.json();
+            if (typeof jf?.tf_a === "number") tfA = jf.tf_a;
+            if (typeof jf?.tf_b === "number") tfB = jf.tf_b;
+          }
+        } catch {}
+      }
+    }
+
+    // Update UI
+    try {
+      const tC = Number(env?.tC);
+      setGauge(gSensTemp, Number.isFinite(tC) ? tC : 0, -20, 80, "°C");
+      if (typeof env?.rh === "number") putText(siHum, env.rh.toFixed(1) + " %");
+      if (typeof env?.p_Pa === "number")
+        putText(siPress, (env.p_Pa / 100).toFixed(1) + " hPa");
+      if (typeof env?.lux === "number")
+        putText(siLux, String(Math.round(env.lux)));
+      if (typeof tfA === "number") putText(siTfA, Math.round(tfA) + " mm");
+      if (typeof tfB === "number") putText(siTfB, Math.round(tfB) + " mm");
+      if (gotIsDay === 0 || gotIsDay === 1) renderDayNight(gotIsDay);
+      else await readDayNight({ mac });
+      siSensStatus.textContent = "OK";
+    } catch {
+      siSensStatus.textContent = "—";
+    }
   }
 
   // ------------------------ POWER: info & control ------------------------
   function displayPower(j) {
-    const v = Number(j?.vbus_mV ?? 0) / 1000; // mV → V
-    const i = Number(j?.ibus_mA ?? 0) / 1000; // mA → A
+    const v = Number(j?.vbus_mV ?? 0) / 1000;
+    const i = Number(j?.ibus_mA ?? 0) / 1000;
     const t = Number.isFinite(Number(j?.tempC)) ? Number(j.tempC) : NaN;
     setGauge(gPwrVolt, v, 0, 60, "V");
     setGauge(gPwrCurr, i, 0, 10, "A");
@@ -1155,8 +1073,7 @@
       if (!r.ok) throw new Error("pwr info");
       const j = await r.json();
       displayPower(j);
-    } catch (e) {
-      // fallback visual
+    } catch {
       setGauge(gPwrVolt, 0, 0, 60, "V");
       setGauge(gPwrCurr, 0, 0, 10, "A");
       setGauge(gPwrTemp, 0, 0, 100, "°C");
@@ -1174,61 +1091,28 @@
         showToast("Power cmd failed");
         return;
       }
-      const j = await r.json().catch(() => null);
+      await r.json().catch(() => null);
       showToast("Power " + String(act).toUpperCase());
-      // pull fresh telem after command
       await readPower();
-      return j;
-    } catch (e) {
+    } catch {
       showToast("Power cmd error");
     }
   }
 
-  // Hook up power buttons
-  pwrOnBtn?.addEventListener("click", () => powerCmd("on"));
-  pwrOffBtn?.addEventListener("click", () => powerCmd("off"));
-
-  // ------------------------ Toolbar actions ------------------------
-  tOn?.addEventListener("click", () => {
-    let target = null;
-    if (selectedId != null) {
-      const b = bricks.find((x) => x.id === selectedId);
-      if (b) target = peers.find((pp) => macEqual(pp.mac || "", b.mac || ""));
-    }
-    if (
-      !target &&
-      selectedPeer &&
-      String(selectedPeer.type).toLowerCase() === "relay"
-    ) {
-      target = selectedPeer;
-    }
-    if (target) testRelay(target);
-    else showToast("Select a relay");
+  pwrOnBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    powerCmd("on");
   });
-  tOff?.addEventListener("click", () => stopSeq());
-  tRead?.addEventListener("click", () => {
-    let target = null;
-    if (selectedId != null) {
-      const b = bricks.find((x) => x.id === selectedId);
-      if (b) target = peers.find((pp) => macEqual(pp.mac || "", b.mac || ""));
-    }
-    if (
-      !target &&
-      selectedPeer &&
-      ["sensor", "entrance", "parking"].includes(
-        String(selectedPeer.type).toLowerCase()
-      )
-    ) {
-      target = selectedPeer;
-    }
-    readSensor(target || {});
+  pwrOffBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    powerCmd("off");
   });
 
   // ------------------------ Init ------------------------
   async function initTopologyPage() {
     await fetchPeers();
     await loadFromDevice();
-    // If a power peer exists, preselect it to show live gauges quickly
+    // Optionally preselect a power peer (starts polling automatically)
     const pwr = peers.find((p) => String(p.type).toLowerCase() === "power");
     if (pwr) {
       selectedId = null;
@@ -1245,15 +1129,14 @@
     initTopologyPage().catch(() => {});
   }
 
-  // delete key removes selected brick
+  // Delete key removes selected brick
   document.addEventListener("keydown", (e) => {
     if (e.key === "Delete" && selectedId != null) {
       const i = bricks.findIndex((b) => b.id === selectedId);
       if (i >= 0) {
         bricks.splice(i, 1);
-        selectedId = null;
+        unselectAll();
         redrawLane();
-        clearSelectionPanel();
         renderPalette();
       }
     }

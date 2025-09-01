@@ -147,6 +147,22 @@ public:  // ============================ PRESENCE / SENSORS ====================
   int8_t   lastSensorDayFlag(uint8_t idx) const { return (idx < ICM_MAX_SENSORS) ? _sensDayNight[idx] : -1; }
   uint32_t lastSensorDayFlagUpdateMs(uint8_t idx) const { return (idx < ICM_MAX_SENSORS) ? _sensDNMs[idx] : 0; }
 
+  bool presenceGetTfRaw(uint8_t idx);  // sends SENS_GET_TFRAW
+  bool presenceGetEnv(uint8_t idx);    // sends SENS_GET_ENV
+
+  // Cached last raw values (per sensor board)
+  float   lastTfDistA_mm(uint8_t idx) const { return (idx<ICM_MAX_SENSORS)? _tfDistA_mm[idx] : NAN; }
+  float   lastTfDistB_mm(uint8_t idx) const { return (idx<ICM_MAX_SENSORS)? _tfDistB_mm[idx] : NAN; }
+  uint16_t lastTfAmpA(uint8_t idx)    const { return (idx<ICM_MAX_SENSORS)? _tfAmpA[idx]    : 0; }
+  uint16_t lastTfAmpB(uint8_t idx)    const { return (idx<ICM_MAX_SENSORS)? _tfAmpB[idx]    : 0; }
+  uint32_t lastTfUpdateMs(uint8_t idx) const { return (idx<ICM_MAX_SENSORS)? _tfMs[idx]     : 0; }
+
+  float   lastEnvTempC(uint8_t idx)   const { return (idx<ICM_MAX_SENSORS)? _envTempC[idx]  : NAN; }
+  float   lastEnvRh(uint8_t idx)      const { return (idx<ICM_MAX_SENSORS)? _envRh[idx]     : NAN; }
+  float   lastEnvPressPa(uint8_t idx) const { return (idx<ICM_MAX_SENSORS)? _envPa[idx]     : NAN; }
+  float   lastEnvLux(uint8_t idx)     const { return (idx<ICM_MAX_SENSORS)? _envLux[idx]    : NAN; }
+  uint32_t lastEnvUpdateMs(uint8_t idx) const { return (idx<ICM_MAX_SENSORS)? _envMs[idx]   : 0; }
+
 public:  // ============================ PEERS / PAIRING ============================
   bool pairPower(const String& macStr);
   bool pairRelay(uint8_t idx, const String& macStr);
@@ -329,6 +345,19 @@ private: // ============================ STATE ============================
   // Relay temps
   float    _relTempC[ICM_MAX_RELAYS] = { NAN };
   uint32_t _relTempMs[ICM_MAX_RELAYS] = { 0 };
+
+  float   _tfDistA_mm[ICM_MAX_SENSORS] = {NAN};
+  float   _tfDistB_mm[ICM_MAX_SENSORS] = {NAN};
+  uint16_t _tfAmpA[ICM_MAX_SENSORS]    = {0};
+  uint16_t _tfAmpB[ICM_MAX_SENSORS]    = {0};
+  uint32_t _tfMs[ICM_MAX_SENSORS]      = {0};
+
+  float   _envTempC[ICM_MAX_SENSORS]   = {NAN};
+  float   _envRh[ICM_MAX_SENSORS]      = {NAN};
+  float   _envPa[ICM_MAX_SENSORS]      = {NAN};
+  float   _envLux[ICM_MAX_SENSORS]     = {NAN};
+  uint32_t _envMs[ICM_MAX_SENSORS]     = {0};
+
 
   // Specials: entrance/parking day-night caches
   int8_t   _entrDNFlag = -1; uint32_t _entrDNMs = 0;

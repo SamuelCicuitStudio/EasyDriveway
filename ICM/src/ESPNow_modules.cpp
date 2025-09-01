@@ -135,3 +135,12 @@ bool ESPNowManager::startSequence(const String& anchor, bool up) {
   (void)anchor; // advisory
   return sequenceStart(up ? SeqDir::UP : SeqDir::DOWN);
 }
+
+bool ESPNowManager::presenceGetTfRaw(uint8_t idx) {
+  PeerRec* pr=nullptr; if(!ensurePeer(ModuleType::PRESENCE, idx, pr)) return false;
+  return enqueueToPeer(pr, CmdDomain::SENS, SENS_GET_TFRAW, nullptr, 0, true);
+}
+bool ESPNowManager::presenceGetEnv(uint8_t idx) {
+  PeerRec* pr=nullptr; if(!ensurePeer(ModuleType::PRESENCE, idx, pr)) return false;
+  return enqueueToPeer(pr, CmdDomain::SENS, SENS_GET_ENV, nullptr, 0, true);
+}

@@ -71,7 +71,9 @@ enum : uint8_t {
   SENS_GET         = 0x30,
   SENS_SET_MODE    = 0x31, // body: uint8_t mode(0 auto/1 manual)
   SENS_TRIG        = 0x32, // optional details
-  SENS_GET_DAYNIGHT= 0x33  // query only the day/night state
+  SENS_GET_DAYNIGHT= 0x33,  // query only the day/night state
+  SENS_GET_TFRAW   = 0x34,  // one-shot: TF-Luna A/B raw samples
+  SENS_GET_ENV     = 0x35   // one-shot: BME280 + ALS (+ day/night flag)
 };
 
 // --- Topology ops ---
@@ -217,4 +219,40 @@ struct __attribute__((packed)) TopoRelayBoundary {
 
   uint8_t  splitRule;      // deterministic split hint (see enum)
   uint8_t  rsv[3];
+};
+// ===== NEW SENSOR RAW PAYLOADS =====
+struct __attribute__((packed)) TfLunaRawPayload {
+  uint8_t  ver;        // =1
+  uint8_t  which;      // 0=both, 1=A, 2=B (sensor may still fill both)
+  uint16_t rate_hz;    // configured device rate (optional; 0 if N/A)
+
+  // A
+  uint16_t distA_mm;   // 0 if invalid
+  uint16_t ampA;       // TF-Luna strength/AMP if available, else 0
+  uint8_t  okA;        // 1=valid sample, 0=N/A
+
+  // B
+  uint16_t distB_mm;   // 0 if invalid
+  uint16_t ampB;
+  uint8_t  okB;
+
+  uint32_t t_ms;       // sensor-local monotonic ms when sampled
+};
+
+struct __attribute__((packed)) SensorEnvPayload {
+  uint8_t  ver;        // =1
+  // BME280
+  int16_t  tC_x100;    // °C *100 (from BME280)
+  uint16_t rh_x100;    // %RH *100
+  int32_t  p_Pa;       // pressure in Pa (or 0 if N/A)
+
+  // ALS (+ day/night mirror)
+  uint16_t lux_x10;    // lux *10 (or 0 if N/A)
+  uint8_t  is_day;     // 1=day, 0=night, 255=unknown
+
+  // Validity bits to be explicit
+  uint8_t  okT;        // temp valid
+  uint8_t  okH;        // humidity valid
+  uint8_t  okP;        // pressure valid
+  uint8_t  okL;        // lux valid
 };

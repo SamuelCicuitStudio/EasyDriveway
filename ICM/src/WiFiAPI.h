@@ -52,7 +52,17 @@
 
 // ---------------- Sensors ----------------
 #define API_SENSOR_DAYNIGHT  "/api/sensor/daynight" // POST {mac} -> {ok,is_day,updated_ms}
+// NEW: one-shot environment (BME280 + ALS)
+#define API_SENSOR_ENV       "/api/sensor/env"      // POST {mac}
+                                                    // -> { ok:true,
+                                                    //      tC:float, rh:float, p_Pa:int, lux:float,
+                                                    //      is_day:0|1 }
 
+// NEW: one-shot TF-Luna raw snapshot (both A & B)
+#define API_SENSOR_TFRAW     "/api/sensor/tfraw"    // POST {mac, which?:0|1|2}
+                                                    // -> { ok:true,
+                                                    //      distA_mm:uint, ampA:uint, okA:0|1,
+                                                    //      distB_mm:uint, ampB:uint, okB:0|1 }
 // ---------------- Sequences ----------------
 #define API_SEQUENCE_START   "/api/sequence/start" // POST {start, direction:"UP|DOWN"}
 #define API_SEQUENCE_STOP    "/api/sequence/stop"  // POST

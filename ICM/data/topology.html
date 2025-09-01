@@ -156,6 +156,7 @@
               <!-- SENSOR panel -->
               <div id="panelSensor" class="kv lg" hidden>
                 <label>Sensor</label>
+
                 <div class="row smallgap g-row">
                   <div class="gauge" id="gSensTemp" data-unit="°C"></div>
                   <div class="kv">
@@ -172,8 +173,36 @@
                   </div>
                 </div>
 
+                <!-- NEW: Environment row -->
+                <div class="row smallgap">
+                  <div class="kv">
+                    <label>Humidity</label>
+                    <div id="siHum">—</div>
+                  </div>
+                  <div class="kv">
+                    <label>Pressure</label>
+                    <div id="siPress">—</div>
+                  </div>
+                  <div class="kv">
+                    <label>Lux</label>
+                    <div id="siLux">—</div>
+                  </div>
+                </div>
+
+                <!-- NEW: TF-Luna raw row -->
+                <div class="row smallgap">
+                  <div class="kv">
+                    <label>TF-Luna A</label>
+                    <div id="siTfA">—</div>
+                  </div>
+                  <div class="kv">
+                    <label>TF-Luna B</label>
+                    <div id="siTfB">—</div>
+                  </div>
+                </div>
+
                 <div class="controls">
-                  <button id="tRead" class="btn">Read</button>
+                  <button id="tLive" class="btn">Live (1s)</button>
                 </div>
               </div>
 

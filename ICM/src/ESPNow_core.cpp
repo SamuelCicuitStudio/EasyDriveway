@@ -626,41 +626,50 @@ void ESPNowManager::handleAck(const uint8_t mac[6], const IcmMsgHdr& h, const ui
 
 void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
   if (len < (int)sizeof(IcmMsgHdr)) return;
-  const IcmMsgHdr* h = (const IcmMsgHdr*)data;
-  const uint8_t* payload = data + sizeof(IcmMsgHdr);
-  int plen = len - (int)sizeof(IcmMsgHdr);
+
+  const IcmMsgHdr* h   = (const IcmMsgHdr*)data;
+  const uint8_t*   payload = data + sizeof(IcmMsgHdr);
+  const int        plen    = len  - (int)sizeof(IcmMsgHdr);
 
   PeerRec* pr = findPeerByMac(mac);
-  if (!pr) { LOGW(1200,"RX from unknown %s", macBytesToStr(mac).c_str()); return; }
-  if (!tokenMatches(pr,*h)) { LOGW(1201,"Token mismatch from %s dom=%u op=%u", macBytesToStr(mac).c_str(), h->dom, h->op); return; }
+  if (!pr) {
+    LOGW(1200,"RX from unknown %s", macBytesToStr(mac).c_str());
+    return;
+  }
+  if (!tokenMatches(pr, *h)) {
+    LOGW(1201,"Token mismatch from %s dom=%u op=%u", macBytesToStr(mac).c_str(), h->dom, h->op);
+    return;
+  }
 
   pr->lastSeen = millis();
   markPeerOk(pr);
 
   switch ((CmdDomain)h->dom) {
     case CmdDomain::SYS:
-      if (h->op == SYS_ACK) { handleAck(mac, *h, payload, plen); }
+      if (h->op == SYS_ACK) {
+        handleAck(mac, *h, payload, plen);
+      }
       break;
 
     case CmdDomain::POWER: {
       if (h->op == PWR_GET && plen >= (int)sizeof(PowerStatusPayload)) {
         const PowerStatusPayload* ps = (const PowerStatusPayload*)payload;
-        _pwrOn          = (ps->on != 0);
-        _pwrFault       = ps->fault;
-        _pwrVbus_mV     = ps->vbus_mV;
-        _pwrIbus_mA     = ps->ibus_mA;
-        _pwrVbat_mV     = ps->vbat_mV;
-        _pwrIbat_mA     = ps->ibat_mA;
+        _pwrOn      = (ps->on != 0);
+        _pwrFault   = ps->fault;
+        _pwrVbus_mV = ps->vbus_mV;
+        _pwrIbus_mA = ps->ibus_mA;
+        _pwrVbat_mV = ps->vbat_mV;
+        _pwrIbat_mA = ps->ibat_mA;
         if (ps->ok) { _pwrTempC = ps->tC_x100 / 100.0f; }
-        _pwrStatMs      = millis();
+        _pwrStatMs  = millis();
         LOGI(1603, "POWER stat on=%u vbus=%umV ibus=%umA vbat=%umV ibat=%umA fault=0x%02X",
-            (unsigned)_pwrOn, (unsigned)_pwrVbus_mV, (unsigned)_pwrIbus_mA,
-            (unsigned)_pwrVbat_mV, (unsigned)_pwrIbat_mA, (unsigned)_pwrFault);
+             (unsigned)_pwrOn, (unsigned)_pwrVbus_mV, (unsigned)_pwrIbus_mA,
+             (unsigned)_pwrVbat_mV, (unsigned)_pwrIbat_mA, (unsigned)_pwrFault);
       }
       if (h->op == PWR_GET_TEMP) {
         float tC;
         if (decodeTempPayload(payload, plen, tC)) {
-          _pwrTempC = tC;
+          _pwrTempC  = tC;
           _pwrTempMs = millis();
           LOGI(1604,"POWER temp=%.2fC", tC);
         }
@@ -685,22 +694,66 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
     }
 
     case CmdDomain::SENS: {
+      // Day/Night (legacy)
       if (h->op == SENS_GET_DAYNIGHT) {
         if (plen >= (int)sizeof(DayNightPayload)) {
           const DayNightPayload* dp = (const DayNightPayload*)payload;
           int8_t flag = dp->ok ? (dp->is_day ? 1 : 0) : -1;
+
           if (pr->type == ModuleType::PRESENCE) {
             if (pr->index < ICM_MAX_SENSORS) {
               _sensDayNight[pr->index] = flag;
-              _sensDNMs[pr->index] = millis();
+              _sensDNMs[pr->index]     = millis();
             } else {
+              // anchors tracked by MAC
               if (memcmp(pr->mac, _entrance.mac, 6) == 0) { _entrDNFlag = flag; _entrDNMs = millis(); }
               else if (memcmp(pr->mac, _parking.mac, 6) == 0) { _parkDNFlag = flag; _parkDNMs = millis(); }
             }
-            LOGI(1602,"PRES[%u] daynight=%s", pr->index, (flag==1?"DAY":(flag==0?"NIGHT":"UNK")));
+            LOGI(1602,"PRES[%u] daynight=%s", pr->index,
+                 (flag==1?"DAY":(flag==0?"NIGHT":"UNK")));
           }
         }
       }
+      // NEW: TF-Luna raw snapshot
+      else if (h->op == SENS_GET_TFRAW) {
+        if (plen >= (int)sizeof(TfLunaRawPayload) &&
+            pr->type == ModuleType::PRESENCE &&
+            pr->index < ICM_MAX_SENSORS) {
+          const TfLunaRawPayload* p = (const TfLunaRawPayload*)payload;
+          _tfDistA_mm[pr->index] = p->okA ? (float)p->distA_mm : NAN;
+          _tfDistB_mm[pr->index] = p->okB ? (float)p->distB_mm : NAN;
+          _tfAmpA[pr->index]     = p->ampA;
+          _tfAmpB[pr->index]     = p->ampB;
+          _tfMs[pr->index]       = millis();
+          LOGI(1605,"PRES[%u] TF-RAW A=%u(mm)/amp=%u ok=%u  B=%u(mm)/amp=%u ok=%u",
+               pr->index,
+               (unsigned)p->distA_mm, (unsigned)p->ampA, p->okA,
+               (unsigned)p->distB_mm, (unsigned)p->ampB, p->okB);
+        }
+      }
+      // NEW: Environmental snapshot (BME280 + ALS + day/night mirror)
+      else if (h->op == SENS_GET_ENV) {
+        if (plen >= (int)sizeof(SensorEnvPayload) &&
+            pr->type == ModuleType::PRESENCE &&
+            pr->index < ICM_MAX_SENSORS) {
+          const SensorEnvPayload* e = (const SensorEnvPayload*)payload;
+          _envTempC[pr->index] = e->okT ? ((float)e->tC_x100)/100.0f : NAN;
+          _envRh[pr->index]    = e->okH ? ((float)e->rh_x100)/100.0f : NAN;
+          _envPa[pr->index]    = e->okP ? (float)e->p_Pa : NAN;
+          _envLux[pr->index]   = e->okL ? ((float)e->lux_x10)/10.0f  : NAN;
+          _envMs[pr->index]    = millis();
+
+          if (e->is_day != 255) {
+            _sensDayNight[pr->index] = (e->is_day ? 1 : 0);
+            _sensDNMs[pr->index]     = millis();
+          }
+          LOGI(1606,"PRES[%u] ENV T=%.2fC RH=%.2f%% P=%.0fPa Lux=%.1f",
+               pr->index,
+               _envTempC[pr->index], _envRh[pr->index],
+               _envPa[pr->index], _envLux[pr->index]);
+        }
+      }
+
       if (_onPresence) _onPresence(mac, pr->index, payload, (size_t)plen);
       break;
     }
