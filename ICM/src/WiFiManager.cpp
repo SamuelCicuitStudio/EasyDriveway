@@ -203,6 +203,14 @@ void WiFiManager::registerRoutes() {
       [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t){ hWiFiApStart(r,d,l,i,t); });
     _server.on(API_WIFI_SCAN,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hWiFiScan(r); });
 
+    _server.on(API_SENSOR_ENV,   HTTP_POST,
+      [](AsyncWebServerRequest* req){ req->send(200, "application/json", "{\"ok\":true}"); },
+      [this](AsyncWebServerRequest* req, String f, size_t i, uint8_t* d, size_t l, size_t t){ hSensorEnv(req, d, l, i, t); });
+
+    _server.on(API_SENSOR_TFRAW, HTTP_POST,
+      [](AsyncWebServerRequest* req){ req->send(200, "application/json", "{\"ok\":true}"); },
+      [this](AsyncWebServerRequest* req, String f, size_t i, uint8_t* d, size_t l, size_t t){ hSensorTfRaw(req, d, l, i, t); });
+
     // ---------- Config ----------
     _server.on(API_CFG_LOAD,           HTTP_GET,  [this](AsyncWebServerRequest* r){ hCfgLoad(r); });
     _server.on(API_CFG_SAVE,           HTTP_POST, nullptr, nullptr,
@@ -641,7 +649,6 @@ void WiFiManager::hTopoGet(AsyncWebServerRequest* req) {
   }
   sendJSON(req, d);
 }
-
 
 /* ==================== Sequences (stubs) ==================== */
 void WiFiManager::hSeqStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
@@ -1257,5 +1264,80 @@ void WiFiManager::hSystemMode(AsyncWebServerRequest* req, uint8_t* data, size_t 
   DynamicJsonDocument res(128);
   res[J_OK]   = ok;
   res[J_MODE] = modeStr;
+  sendJSON(req, res);
+}
+int WiFiManager::findSensorIndexByMac(const String& mac) const {
+  if (!_esn || !mac.length()) return -1;
+
+  DynamicJsonDocument in(4096);
+  String src = _esn->serializePeers();               // has sensors[].{idx,mac}
+  if (deserializeJson(in, src)) return -1;
+
+  JsonVariantConst root = in.as<JsonVariantConst>();
+  JsonArrayConst sensors = root.containsKey("sensors") ? root["sensors"].as<JsonArrayConst>() : JsonArrayConst();
+  for (JsonObjectConst o : sensors) {
+    const String m = o["mac"] | String();
+    if (m.equalsIgnoreCase(mac)) return (int)(o["idx"] | -1);
+  }
+  return -1;
+}
+// POST { "mac": "AA:BB:CC:DD:EE:FF" }
+void WiFiManager::hSensorEnv(AsyncWebServerRequest* req,
+                             uint8_t* data, size_t len, size_t index, size_t total) {
+  static String body; if (index == 0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(256);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  JsonVariantConst root = d.as<JsonVariantConst>();
+  const String mac = root.containsKey(J_MAC) ? String(root[J_MAC].as<const char*>()) : String();
+  if (!mac.length()) { sendError(req, "Missing mac"); return; }
+
+  int idx = findSensorIndexByMac(mac);
+  if (idx < 0) { sendError(req, "Unknown sensor mac", 404); return; }
+
+  bool requested = false;
+  if (_esn) requested = _esn->presenceGetEnv((uint8_t)idx);  // send SENS_GET_ENV
+
+  DynamicJsonDocument res(256);
+  res[J_OK] = true;
+  // Return the latest snapshot we have right now (UI will refresh again after device replies)
+  res["tC"]        = _esn ? _esn->lastEnvTempC((uint8_t)idx)   : NAN;
+  res["rh"]        = _esn ? _esn->lastEnvRh((uint8_t)idx)      : NAN;
+  res["p_Pa"]      = _esn ? _esn->lastEnvPressPa((uint8_t)idx) : NAN;
+  res["lux"]       = _esn ? _esn->lastEnvLux((uint8_t)idx)     : NAN;
+  res["updated_ms"]= _esn ? _esn->lastEnvUpdateMs((uint8_t)idx): 0;
+  res["requested"] = requested;
+  sendJSON(req, res);
+}
+
+// POST { "mac": "AA:BB:CC:DD:EE:FF", "which": 2 }  // 'which' is ignored for now
+void WiFiManager::hSensorTfRaw(AsyncWebServerRequest* req,
+                               uint8_t* data, size_t len, size_t index, size_t total) {
+  static String body; if (index == 0) body.clear();
+  body += String((const char*)data).substring(0, len);
+  if (index + len < total) return;
+
+  DynamicJsonDocument d(256);
+  if (deserializeJson(d, body)) { sendError(req, "Invalid JSON"); return; }
+  JsonVariantConst root = d.as<JsonVariantConst>();
+  const String mac = root.containsKey(J_MAC) ? String(root[J_MAC].as<const char*>()) : String();
+  if (!mac.length()) { sendError(req, "Missing mac"); return; }
+
+  int idx = findSensorIndexByMac(mac);
+  if (idx < 0) { sendError(req, "Unknown sensor mac", 404); return; }
+
+  bool requested = false;
+  if (_esn) requested = _esn->presenceGetTfRaw((uint8_t)idx); // send SENS_GET_TFRAW
+
+  DynamicJsonDocument res(256);
+  res[J_OK]       = true;
+  res["distA_mm"] = _esn ? _esn->lastTfDistA_mm((uint8_t)idx) : NAN;
+  res["distB_mm"] = _esn ? _esn->lastTfDistB_mm((uint8_t)idx) : NAN;
+  res["ampA"]     = _esn ? _esn->lastTfAmpA((uint8_t)idx)     : 0;
+  res["ampB"]     = _esn ? _esn->lastTfAmpB((uint8_t)idx)     : 0;
+  res["updated_ms"]= _esn ? _esn->lastTfUpdateMs((uint8_t)idx): 0;
+  res["requested"]= requested;
   sendJSON(req, res);
 }

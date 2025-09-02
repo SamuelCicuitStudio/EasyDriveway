@@ -10,7 +10,9 @@
  *  - POST /api/sequence/start   {start, direction}
  *  - POST /api/sequence/stop
  *  - POST /api/sensor/daynight  {mac}
- *  - POST /api/sensor/read      {mac}  <-- NEW (tempC, humidity, pressure_hPa, lux, tf_a, tf_b)
+ *  - POST /api/sensor/read      {mac}  // tempC, humidity, pressure_hPa, lux, tf_a, tf_b
+ *  - GET  /api/power/info       // 48V nominal mock (vbus_mV, ibus_mA, tempC, on)
+ *  - POST /api/power/cmd        {pwr_action:"on|off|status|refresh"}
  *  - POST /logout               -> redirects to /login.html
  *
  * Data persists across reloads via localStorage.
@@ -304,7 +306,8 @@
         tf_b,
       });
     }
-    // ---- Power: state + endpoints ----
+
+    // ---- Power: state + endpoints (48V nominal) ----
     const LS_PWR = "icm_mock_power";
 
     function loadPower() {
@@ -312,13 +315,13 @@
         return (
           JSON.parse(localStorage.getItem(LS_PWR) || "null") || {
             on: true,
-            vbus_mV: 24000,
+            vbus_mV: 48000, // 48V nominal (initial)
             ibus_mA: 1200,
             tempC: 32.0,
           }
         );
       } catch {
-        return { on: true, vbus_mV: 24000, ibus_mA: 1200, tempC: 32.0 };
+        return { on: true, vbus_mV: 48000, ibus_mA: 1200, tempC: 32.0 };
       }
     }
     function savePower(p) {
@@ -326,9 +329,9 @@
     }
 
     function jitter(n, span) {
-      // ±span around n
       return n + (Math.random() * 2 - 1) * span;
-    }
+    } // ±span
+
     function evolvePower(p) {
       const t = Date.now() / 1000;
       if (p.on) {

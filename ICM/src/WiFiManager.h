@@ -82,6 +82,9 @@ private: // ======================= JSON: PEERS/TOPO ======================
   void hTopoGet(AsyncWebServerRequest* req);
   void hSensorDayNight(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
 
+  void hSensorEnv  (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+  void hSensorTfRaw(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
+  int findSensorIndexByMac(const String& mac) const;
 private: // ======================= JSON: SEQUENCE ========================
   void hSeqStart(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);
   void hSeqStop (AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total);

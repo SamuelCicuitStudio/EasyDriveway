@@ -83,10 +83,10 @@
       dangerHigh: 1040,
     },
     vbus_V: {
-      warnLow: 22,
-      warnHigh: 28, // 24V nominal
-      dangerLow: 20,
-      dangerHigh: 30,
+      warnLow: 44,
+      warnHigh: 52, //  48V nominal
+      dangerLow: 42,
+      dangerHigh: 54,
     },
     ibus_A: { warn: 4.0, danger: 6.0 }, // current
     pwrTempC: { warn: 60, danger: 80 }, // PSU temp
@@ -1036,17 +1036,40 @@
 
     // Update UI
     try {
+      // Temperature
       const tC = Number(env?.tC);
       setGauge(gSensTemp, Number.isFinite(tC) ? tC : 0, -20, 80, "°C");
-      if (typeof env?.rh === "number") putText(siHum, env.rh.toFixed(1) + " %");
-      if (typeof env?.p_Pa === "number")
-        putText(siPress, (env.p_Pa / 100).toFixed(1) + " hPa");
+      setStateClass(
+        gSensTemp,
+        levelHi(tC, LIMITS.tempC.warn, LIMITS.tempC.danger)
+      );
+
+      // Humidity
+      if (typeof env?.rh === "number") {
+        putText(siHum, env.rh.toFixed(1) + " %");
+        setStateClass(
+          siHum,
+          levelHi(env.rh, LIMITS.humidity.warn, LIMITS.humidity.danger)
+        );
+      }
+
+      // Pressure (Pa → hPa)
+      if (typeof env?.p_Pa === "number") {
+        const hPa = env.p_Pa / 100;
+        putText(siPress, hPa.toFixed(1) + " hPa");
+        setStateClass(siPress, levelBand(hPa, LIMITS.pressure_hPa));
+      }
+
+      // Lux / TF raw
       if (typeof env?.lux === "number")
         putText(siLux, String(Math.round(env.lux)));
       if (typeof tfA === "number") putText(siTfA, Math.round(tfA) + " mm");
       if (typeof tfB === "number") putText(siTfB, Math.round(tfB) + " mm");
+
+      // Day/Night
       if (gotIsDay === 0 || gotIsDay === 1) renderDayNight(gotIsDay);
       else await readDayNight({ mac });
+
       siSensStatus.textContent = "OK";
     } catch {
       siSensStatus.textContent = "—";
@@ -1061,6 +1084,18 @@
     setGauge(gPwrVolt, v, 0, 60, "V");
     setGauge(gPwrCurr, i, 0, 10, "A");
     setGauge(gPwrTemp, Number.isFinite(t) ? t : 0, 0, 100, "°C");
+
+    // Apply state colors
+    setStateClass(gPwrVolt, levelBand(v, LIMITS.vbus_V));
+    setStateClass(
+      gPwrCurr,
+      levelHi(i, LIMITS.ibus_A.warn, LIMITS.ibus_A.danger)
+    );
+    setStateClass(
+      gPwrTemp,
+      levelHi(t, LIMITS.pwrTempC.warn, LIMITS.pwrTempC.danger)
+    );
+
     if (j && typeof j.on === "boolean") {
       pwrOnBtn?.classList.toggle("active", j.on);
       pwrOffBtn?.classList.toggle("active", !j.on);
