@@ -24,13 +24,17 @@ void SensorEspNowManager::onSentThunk(const uint8_t *mac, esp_now_send_status_t 
 
 // ================== public ==================
 bool SensorEspNowManager::begin(uint8_t channel, const char* pmk16){
-  channel_ = channel;
-  s_self = this;
+  // NEW: prefer persisted state
+  loadFromNvs();                                                   // loads channel_, icmMac_, token16_, relays
 
+  // If caller passed an explicit channel, you can override (or keep NVS):
+  if (channel >= 1 && channel <= 13) channel_ = channel;
+
+  s_self = this;
   WiFi.mode(WIFI_STA);
-  // Match ICM channel
+
   esp_wifi_set_promiscuous(true);
-  esp_wifi_set_channel(channel_, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(channel_, WIFI_SECOND_CHAN_NONE);           // uses loaded channel
   esp_wifi_set_promiscuous(false);
 
   if (esp_now_init() != ESP_OK) return false;
@@ -39,20 +43,29 @@ bool SensorEspNowManager::begin(uint8_t channel, const char* pmk16){
   esp_now_register_recv_cb(&SensorEspNowManager::onRecvThunk);
   esp_now_register_send_cb(&SensorEspNowManager::onSentThunk);
 
+  // Ensure master + relay peers are registered with ESP-NOW
   if (haveIcm_) ensurePeer_(icmMac_);
+  for (auto &rp : relNeg_) ensurePeer_(rp.mac);
+  for (auto &rp : relPos_) ensurePeer_(rp.mac);
+
   return true;
 }
+
 
 void SensorEspNowManager::setIcmMac(const uint8_t mac[6]){
   memcpy(icmMac_, mac, 6);
   haveIcm_ = true;
   ensurePeer_(icmMac_);
-}
+  // NEW: persist master MAC as "AA:BB:CC:DD:EE:FF"
+  cfg_->PutString(SSM_MASTER_MAC_KEY, macBytesToStr(icmMac_).c_str());
+}  // uses macBytesToStr() you already have. :contentReference[oaicite:2]{index=2}
 
 void SensorEspNowManager::setNodeToken16(const uint8_t token16[16]){
   memcpy(token16_, token16, 16);
   haveTok_ = true;
-}
+  // NEW: persist our shared token as 32-hex string (uses your tok16ToHex_ helper)
+  cfg_->PutString(SSM_TOKEN16_KEY, tok16toHex(token16_).c_str());
+}  // tok16toHex() exists in your .cpp. :contentReference[oaicite:3]{index=3}
 
 void SensorEspNowManager::poll(){
   // Execute scheduled channel switch, if any
@@ -293,14 +306,39 @@ bool SensorEspNowManager::makeTfRaw_(uint8_t which, TfLunaRawPayload& out){
   out.ver = 1;
   out.which = which;
   out.t_ms = millis();
-  if (!tfFetch_) return false;
-  TfSample a{0,0,false}, b{0,0,false}; uint16_t rate=0;
-  if (!tfFetch_(which, a, b, rate)) return false;
+
+  if (!tf_) return false;
+
+  TFLunaManager::Sample a{}, b{};
+  uint16_t rate = 0;
+  bool ok = false;
+
+  // which semantics preserved: 0 = both, 1 = A only, 2 = B only
+  if (which == 0) {
+    ok = tf_->readBoth(a, b, rate);
+  } else if (which == 1) {
+    ok = tf_->readA(a);
+    // try to estimate rate using fetch (non-critical)
+    TFLunaManager::Sample ta{}, tb{}; uint16_t r=0;
+    if (tf_->fetch(0, ta, tb, r)) rate = r;
+  } else if (which == 2) {
+    ok = tf_->readB(b);
+    TFLunaManager::Sample ta{}, tb{}; uint16_t r=0;
+    if (tf_->fetch(0, ta, tb, r)) rate = r;
+  } else {
+    // unknown selector -> default to both
+    ok = tf_->readBoth(a, b, rate);
+  }
+
+  if (!ok) return false;
+
   out.rate_hz  = rate;
   out.distA_mm = a.dist_mm; out.ampA = a.amp; out.okA = a.ok ? 1 : 0;
   out.distB_mm = b.dist_mm; out.ampB = b.amp; out.okB = b.ok ? 1 : 0;
   return true;
+  return true;
 }
+
 
 bool SensorEspNowManager::makeEnv_(SensorEnvPayload& out){
   memset(&out, 0, sizeof(out));
@@ -562,4 +600,105 @@ uint32_t SensorEspNowManager::unixNow_() const {
   // If you track validity, check it here; otherwise getUnixTime()==0 implies “not synced”
   uint32_t t = rtc_ ? (uint32_t)rtc_->getUnixTime() : 0;
   return t ? t : (uint32_t)(millis() / 1000);
+}
+// --- parse "AA:BB:CC:DD:EE:FF" into 6 bytes
+static bool parseMacStr_(const String& s, uint8_t mac[6]){
+  if (s.length() != 17) return false;
+  unsigned v[6];
+  if (sscanf(s.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x",
+             &v[0],&v[1],&v[2],&v[3],&v[4],&v[5]) != 6) return false;
+  for (int i=0;i<6;i++) mac[i] = (uint8_t)v[i];
+  return true;
+}
+
+// --- parse 32-hex string into 16 bytes
+static int hexVal_(char c){
+  if (c>='0'&&c<='9') return c-'0';
+  if (c>='A'&&c<='F') return c-'A'+10;
+  if (c>='a'&&c<='f') return c-'a'+10;
+  return -1;
+}
+static bool parseTok16Hex_(const String& hex, uint8_t out[16]){
+  if (hex.length() < 32) return false;
+  for (int i=0;i<16;i++){
+    int hi = hexVal_(hex[i*2+0]);
+    int lo = hexVal_(hex[i*2+1]);
+    if (hi<0||lo<0) return false;
+    out[i] = (uint8_t)((hi<<4)|lo);
+  }
+  return true;
+}
+
+bool SensorEspNowManager::loadFromNvs(){
+  // ---- Channel (mirror): if saved, adopt it before radio setup
+  channel_ = (uint8_t)cfg_->GetInt(ESPNOW_CH_KEY, ESPNOW_CH_DEFAULT);  // from Config.h :contentReference[oaicite:6]{index=6}
+
+  // ---- Master MAC
+  {
+    String macStr = cfg_->GetString(SSM_MASTER_MAC_KEY, "");          // "SMAC" :contentReference[oaicite:7]{index=7}
+    if (macStr.length() == 17 && parseMacStr_(macStr, icmMac_)) {
+      haveIcm_ = true;
+      ensurePeer_(icmMac_);                                           // add to esp-now peer list
+    }
+  }
+
+  // ---- Shared token (this node's token that ICM expects)
+  {
+    String t = cfg_->GetString(SSM_TOKEN16_KEY, "");                   // "STOK" (32-hex) :contentReference[oaicite:8]{index=8}
+    uint8_t tmp[16];
+    if (parseTok16Hex_(t, tmp)) {
+      memcpy(token16_, tmp, 16);
+      haveTok_ = true;
+    }
+  }
+
+  // ---- Sensor index (optional, for diagnostics/UI)
+  sensIdx_ = (uint8_t)cfg_->GetInt(NVS_ZC_SENSOR_INDEX, 0xFF);        // :contentReference[oaicite:9]{index=9}
+
+  // ---- Rebuild relay topology (MACs + tokens) from counts and ordinal keys
+  relNeg_.clear();
+  relPos_.clear();
+
+  const int nNeg = cfg_->GetInt(NVS_ZC_NEG_COUNT, 0);                  // how many entries on - side :contentReference[oaicite:10]{index=10}
+  const int nPos = cfg_->GetInt(NVS_ZC_POS_COUNT, 0);                  // how many entries on + side  :contentReference[oaicite:11]{index=11}
+
+  auto getStr = [&](const char* fmtKey, unsigned ord)->String{
+    char key[12]; snprintf(key, sizeof(key), fmtKey, ord);
+    return cfg_->GetString(key, "");
+  };
+
+  // Negative side: ordinals 1..nNeg map to relPos = -1, -2, ...
+  for (int i = 1; i <= nNeg; ++i){
+    String macS = getStr(NVS_ZC_NEG_MAC_FMT,     (unsigned)i);        // "ZNM%u"   → "AA:BB:..." :contentReference[oaicite:12]{index=12}
+    String tokS = getStr(NVS_ZC_NEG_TOKEN16_FMT, (unsigned)i);        // "ZNT%u"   → 32-hex      :contentReference[oaicite:13]{index=13}
+    if (macS.isEmpty() || tokS.isEmpty()) continue;
+
+    RelayPeer rp; rp.relayIdx = 0xFF; rp.relPos = -i;
+    if (!parseMacStr_(macS, rp.mac)) continue;
+    if (!parseTok16Hex_(tokS, rp.tok16)) continue;
+    relNeg_.push_back(rp);
+    ensurePeer_(rp.mac);
+  }
+
+  // Positive side: ordinals 1..nPos map to relPos = +1, +2, ...
+  for (int i = 1; i <= nPos; ++i){
+    String macS = getStr(NVS_ZC_POS_MAC_FMT,     (unsigned)i);        // "ZPM%u" :contentReference[oaicite:14]{index=14}
+    String tokS = getStr(NVS_ZC_POS_TOKEN16_FMT, (unsigned)i);        // "ZPT%u" :contentReference[oaicite:15]{index=15}
+    if (macS.isEmpty() || tokS.isEmpty()) continue;
+
+    RelayPeer rp; rp.relayIdx = 0xFF; rp.relPos = +i;
+    if (!parseMacStr_(macS, rp.mac)) continue;
+    if (!parseTok16Hex_(tokS, rp.tok16)) continue;
+    relPos_.push_back(rp);
+    ensurePeer_(rp.mac);
+  }
+
+  // (Optional) If you rely on getRelayByIdx(), you can reconstruct 'relayIdx'
+  // by scanning the per-index map saved by saveTopoMacStrings_():
+  //   - NVS_ZC_RELAY_MAC_BYIDX_FMT ("ZRM%u")
+  //   - NVS_ZC_RELAY_TOK_BYIDX_FMT ("ZRT%u")
+  // The save path already writes those. :contentReference[oaicite:16]{index=16}
+  // You can match MACs to fill rp.relayIdx here if needed.
+
+  return true;
 }

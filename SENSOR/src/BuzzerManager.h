@@ -42,6 +42,8 @@ public:
   enum Event : uint8_t {
     EV_STARTUP = 0,          // boot complete, config valid
     EV_CONFIG_MODE,          // factory/AP/config mode entered
+    EV_PAIR_REQUEST,        // prompt: pair with ICM (user attention)
+    EV_CONFIG_PROMPT,       // prompt: configure TF-Luna (user attention)
     EV_CONFIG_SAVED,         // settings stored OK
     EV_LINK_UP,              // ICM link established (ESP-NOW peer ready)
     EV_LINK_DOWN,            // ICM link lost

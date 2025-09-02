@@ -252,6 +252,7 @@ void ConfigManager::initializeVariables() {
     PutBool(RESET_FLAG_KEY,     RESET_FLAG_DEFAULT);            // false
     PutBool(GOTO_CONFIG_KEY,    RESET_FLAG_DEFAULT);            // false
     PutString(DEVICE_ID_KEY,    DEVICE_ID_DEFAULT);             // "SSM01"
+    PutBool(DEVICE_PAIRED_KEY,  DEVICE_PAIRED_DEFAULT);         // NEW: device paired flag
 
     // ---------------- Friendly name generation ------------------
     String mac = WiFi.macAddress();    // "24:6F:28:1A:2B:3C"
@@ -290,7 +291,7 @@ void ConfigManager::initializeVariables() {
 
     // ---------------- ESP-NOW / System Mode ---------------------
     PutInt(ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);
-    PutInt(ESPNOW_MD_KEY, (int)ESPNOW_MD_DEFAULT);
+    PutInt(ESPNOW_MD_KEY, (int)ESPNOW_MD_DEFAULT); // 0=AUTO, 1=MAN  (already your Auto/Manual key)
 
     // Short aliases used by SensorEspNowManager (SSM mirrors)
     PutInt   (SSM_ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);
@@ -326,7 +327,7 @@ void ConfigManager::initializeVariables() {
     PutInt(FAN_PWM_PIN_KEY,  FAN_PWM_PIN_DEFAULT);        // 8
     PutInt(LED_R_PIN_KEY,    LED_R_PIN_DEFAULT);          // 6
     PutInt(LED_G_PIN_KEY,    LED_G_PIN_DEFAULT);          // 7
-    PutInt(LED_B_PIN_KEY,    LED_B_PIN_DEFAULT);          // 8  (kept same as your board)
+    PutInt(LED_B_PIN_KEY,    LED_B_PIN_DEFAULT);          // 8
 
     // Buzzer — same model/pin
     PutString(BUZZER_MODEL_KEY,       BUZZER_MODEL_DEFAULT);        // "YS-MBZ12085C05R42"
@@ -342,6 +343,7 @@ void ConfigManager::initializeVariables() {
     PutInt   (TF_NEAR_MM_KEY,   TF_NEAR_MM_DEFAULT);       // 200
     PutInt   (TF_FAR_MM_KEY,    TF_FAR_MM_DEFAULT);        // 3200
     PutInt   (AB_SPACING_MM_KEY,AB_SPACING_MM_DEFAULT);    // 350
+    PutBool  (TFL_CONFIGURED_KEY, TFL_CONFIGURED_DEFAULT); // NEW: TF-Luna configured flag
 
     // BME280 on I2C2
     PutString(BME_MODEL_KEY,    BME_MODEL_DEFAULT);        // "BME280"

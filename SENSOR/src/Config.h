@@ -37,6 +37,13 @@
 #define SW_VER_DEFAULT              "1.0.0"
 #define HW_VER_DEFAULT              "A1"
 #define BUILD_STR_DEFAULT           ""
+// [1] Identity / Versioning / Flags (add these)
+#define DEVICE_PAIRED_KEY            "PAIRED"   // device pairing flag
+#define DEVICE_PAIRED_DEFAULT        false      // default: not paired
+
+// [6] Sensor stack configuration (add these near TF-Luna keys)
+#define TFL_CONFIGURED_KEY           "TFLCFG"   // TF-Luna configured flag
+#define TFL_CONFIGURED_DEFAULT       false      // default: not configured
 
 // ============================================================================
 // [2] Connectivity (BLE / Wi-Fi / ESP-NOW)

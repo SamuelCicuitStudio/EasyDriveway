@@ -98,7 +98,18 @@ void BuzzerManager::play(Event ev) {
       static const Step k[] = { { 700, 60, 40 }, { 1200, 60, 40 }, { 1700, 80, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }
-    case EV_CONFIG_MODE: {
+    
+    case EV_PAIR_REQUEST: {
+      // Rising attention triple-chirp (pair with ICM)
+      static const Step k[] = { { 900, 60, 60 }, { 1200, 60, 60 }, { 1500, 120, 200 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+    case EV_CONFIG_PROMPT: {
+      // Two quick nudges to suggest TF-Luna configuration action
+      static const Step k[] = { { 1100, 40, 80 }, { 1100, 40, 0 } };
+      runPattern(k, sizeof(k)/sizeof(k[0])); break;
+    }
+case EV_CONFIG_MODE: {
       static const Step k[] = { { 1000, 40, 60 }, { 1000, 40, 200 }, { 1000, 40, 0 } };
       runPattern(k, sizeof(k)/sizeof(k[0])); break;
     }

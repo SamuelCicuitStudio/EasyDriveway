@@ -62,11 +62,7 @@
 class SensorEspNowManager {
 public:
   // ========== Types ==========
-  struct TfSample { uint16_t dist_mm; uint16_t amp; bool ok; };
-  typedef bool (*TfFetchFn)(uint8_t which /*0 both,1 A,2 B*/,
-                            TfSample& a, TfSample& b, uint16_t& rateHz);
-
-  struct RelayPeer {
+struct RelayPeer {
     uint8_t  relayIdx = 0xFF;
     int8_t   relPos   = 0;         // -N..-1 or +1..+N
     uint8_t  mac[6]   = {0};
@@ -80,7 +76,6 @@ public:
   void attachBME(BME280Manager* bme)   { bme_ = bme; }
   void attachALS(VEML7700Manager* als) { als_ = als; }
   void attachTF(TFLunaManager* tf) { tf_ = tf; }
-  void attachTfFetcher(TfFetchFn fn)   { tfFetch_ = fn; }
   void attachRTC(RTCManager* rtc) { rtc_ = rtc; }   // new
 
   // Begin ESP-NOW on a channel; opt PMK
@@ -122,6 +117,8 @@ public:
 
   // Utility
   static String macBytesToStr(const uint8_t mac[6]);
+
+  bool loadFromNvs();
 
   // Sensor -> Relay ("turn on for duration"), by ±position or by global relay index
   bool sendRelayOnForByPos(int8_t relPos, uint8_t chMask, uint16_t on_ms,
@@ -196,8 +193,7 @@ private:
   BME280Manager*   bme_  = nullptr;
   VEML7700Manager* als_  = nullptr;
   TFLunaManager*   tf_      = nullptr;
-  TfFetchFn        tfFetch_ = nullptr;
-  RTCManager*   rtc_  = nullptr;
+RTCManager*   rtc_  = nullptr;
 
   // ICM peer
   uint8_t icmMac_[6] = {0};
