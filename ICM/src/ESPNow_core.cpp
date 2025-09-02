@@ -645,11 +645,43 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
   markPeerOk(pr);
 
   switch ((CmdDomain)h->dom) {
-    case CmdDomain::SYS:
+    case CmdDomain::SYS: {
       if (h->op == SYS_ACK) {
         handleAck(mac, *h, payload, plen);
+        break;
       }
+
+      if (h->op == SYS_PING) {
+        // --- Parse nonce if present (optional) ---
+        uint32_t n = 0;
+        if (payload && plen >= (int)sizeof(uint32_t)) {
+          memcpy(&n, payload, sizeof(uint32_t));
+        }
+
+        // 1) If this is the echo of a ping we originated -> swallow (avoid ping-pong)
+        if (n != 0 && pr->pendingPingNonce != 0 && n == pr->pendingPingNonce) {
+          // Optional RTT could be computed here: millis() - pr->pingSentMs
+          pr->pendingPingNonce = 0;
+          break; // do not echo
+        }
+
+        // 2) Loop guard: if we echoed this same nonce very recently, drop it
+        const uint32_t nowMs = millis();
+        if (n != 0 && n == pr->lastEchoedNonce && (nowMs - pr->lastEchoedMs) < 2000UL) {
+          break; // avoid repeating the echo within 2s window
+        }
+
+        // 3) Otherwise, peer-initiated ping -> echo back once (no ACK)
+        (void)enqueueToPeer(pr, CmdDomain::SYS, SYS_PING, payload, plen, /*requireAck=*/false);
+        pr->lastEchoedNonce = n;       // n==0 (no payload) is also tracked; still OK
+        pr->lastEchoedMs    = nowMs;
+        break;
+      }
+
+      // Unknown/other SYS op: deliver to unknown handler if set
+      if (_onUnknown) _onUnknown(mac, *h, payload, (size_t)plen);
       break;
+    }
 
     case CmdDomain::POWER: {
       if (h->op == PWR_GET && plen >= (int)sizeof(PowerStatusPayload)) {
@@ -705,7 +737,6 @@ void ESPNowManager::onRecv(const uint8_t *mac, const uint8_t *data, int len) {
               _sensDayNight[pr->index] = flag;
               _sensDNMs[pr->index]     = millis();
             } else {
-              // anchors tracked by MAC
               if (memcmp(pr->mac, _entrance.mac, 6) == 0) { _entrDNFlag = flag; _entrDNMs = millis(); }
               else if (memcmp(pr->mac, _parking.mac, 6) == 0) { _parkDNFlag = flag; _parkDNMs = millis(); }
             }

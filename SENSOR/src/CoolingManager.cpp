@@ -3,15 +3,13 @@
 // ======================= Public API ===========================
 bool CoolingManager::begin() {
     if (!_cfg) return false;
+    if (!_bme) { logSensorFault("bme_ptr_null"); return false; }
 
     // Load pins from config
-    _pinFanPwm  = _cfg->GetInt(FAN_PWM_PIN_KEY,        FAN_PWM_PIN_DEFAULT);
-    _pinTemp    = _cfg->GetInt(TEMP_SENSOR_PIN_KEY,    TEMP_SENSOR_PIN_DEFAULT);
-    _tempPullup = _cfg->GetBool(TEMP_SENSOR_PULLUP_KEY, TEMP_SENSOR_PULLUP_DEFAULT);
+    _pinFanPwm  = _cfg->GetInt(FAN_PWM_PIN_KEY, FAN_PWM_PIN_DEFAULT);
 
     // Setup HW
     setupPWM();
-    setupSensor();
 
     // Log init snapshot
     logInit();
@@ -112,39 +110,32 @@ void CoolingManager::setupPWM() {
 #endif
 }
 
-void CoolingManager::setupSensor() {
-    if (_tempPullup) { pinMode(_pinTemp, INPUT_PULLUP); }
-    _oneWire = new OneWire(_pinTemp);
-    _sensors = new DallasTemperature(_oneWire);
-    _sensors->begin();
-    _sensors->setWaitForConversion(true);
-}
-
 // ===================== Control / Logic ========================
 void CoolingManager::periodicUpdate() {
     _periodCounter++;
 
-    // Read temperature
-    _sensors->requestTemperatures();
-    float tC = _sensors->getTempCByIndex(0);
-
-    // Filter invalid reads (Dallas returns -127 or 85 after power)
-    if (tC == DEVICE_DISCONNECTED_C || tC < -55.0f || tC > 125.0f || fabsf(tC - 85.0f) < 0.01f) {
+    // Read temperature from BME
+    float tC = NAN, rh = NAN, pPa = NAN;
+    if (!_bme->read(tC, rh, pPa)) {
+        // If no new data, try to use cached values (if any)
         if (!isnan(_lastTempC)) {
-            tC = _lastTempC; // keep previous good value
+            tC = _lastTempC;
+            rh = _lastRH;
+            pPa = _lastP;
         } else {
-            tC = NAN;
-            logSensorFault("temp_invalid");
+            logSensorFault("bme_read_fail");
         }
     }
 
-    // Apply mode logic
+    // Apply mode logic (may receive NaN -> conservative behavior)
     applyModeCommand(_modeUser, tC);
 
     // Log temp periodically or when it changes significantly
     logTempIfNeeded(tC);
 
     _lastTempC = tC;
+    _lastRH    = rh;
+    _lastP     = pPa;
 }
 
 void CoolingManager::applyModeCommand(Mode m, float tC) {
@@ -226,8 +217,8 @@ void CoolingManager::writeFanPercent(uint8_t pct) {
 void CoolingManager::logInit() {
     if (!_log) return;
     ICM_PWR_INFO((*_log), 1200,
-        "Cooling init pwmPin=%d tempPin=%d pullup=%d eco=%.1f norm=%.1f force=%.1f hyst=%.1f eco%%=%u norm%%=%u force%%=%u",
-        _pinFanPwm, _pinTemp, (int)_tempPullup,
+        "Cooling init pwmPin=%d eco=%.1f norm=%.1f force=%.1f hyst=%.1f eco%%=%u norm%%=%u force%%=%u",
+        _pinFanPwm,
         _ecoOnC, _normOnC, _forceOnC, _hystC,
         _ecoPct, _normPct, _forcePct);
 }
@@ -244,7 +235,8 @@ void CoolingManager::logTempIfNeeded(float tC) {
     }
 
     if (dueByDelta || dueByTime || isnan(_lastLoggedTempC)) {
-        ICM_PWR_INFO((*_log), 1204, "Temp=%.2fC mode=%d pct=%u", tC, (int)_modeApplied, _lastSpeedPct);
+        ICM_PWR_INFO((*_log), 1204, "Temp=%.2fC RH=%.1f%% P=%.0fPa mode=%d pct=%u",
+                     tC, _lastRH, _lastP, (int)_modeApplied, _lastSpeedPct);
         _lastLoggedTempC = tC;
     }
 }

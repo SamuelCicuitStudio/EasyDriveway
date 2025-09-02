@@ -1,9 +1,8 @@
 /**************************************************************
  *  Project     : ICM (Interface Control Module)
  *  File        : CommandAPI.h — regrouped by domain/concern
- *  Note        : Structural re‑ordering ONLY. All enums/structs/values
- *                preserved from the original header; now grouped so that
- *                related ops and payloads sit together.
+ *  Note        : Backward-compatible update. Adds zero-centered
+ *                sensor topology and relay boundary bundles.
  **************************************************************/
 #pragma once
 #include <Arduino.h>
@@ -23,7 +22,7 @@
 static constexpr uint8_t PRES_IDX_ENTRANCE = 0xFE;  // special A
 static constexpr uint8_t PRES_IDX_PARKING  = 0xFF;  // special B
 
-// Global sequence direction
+// Global sequence direction (legacy; still supported)
 enum class SeqDir : uint8_t { UP = 0, DOWN = 1 };
 
 // Command domains
@@ -72,18 +71,18 @@ enum : uint8_t {
   SENS_GET         = 0x30,
   SENS_SET_MODE    = 0x31, // body: uint8_t mode(0 auto/1 manual)
   SENS_TRIG        = 0x32, // optional details
-  SENS_GET_DAYNIGHT= 0x33  // query only the day/night state
+  SENS_GET_DAYNIGHT= 0x33,  // query only the day/night state
+  SENS_GET_TFRAW   = 0x34,  // one-shot: TF-Luna A/B raw samples
+  SENS_GET_ENV     = 0x35   // one-shot: BME280 + ALS (+ day/night flag)
 };
 
 // --- Topology ops ---
 enum : uint8_t {
-  TOPO_SET_NEXT = 0x40,   // relay: set "next" hop (MAC/IP)
-  TOPO_SET_DEP  = 0x41,   // sensor: set target relay idx+MAC/IP
-  TOPO_CLEAR    = 0x42,
-  TOPO_PUSH     = 0x43
+  TOPO_PUSH_ZC_SENSOR      = 0x44,   // zero-centered bundle to a sensor
+  TOPO_PUSH_BOUNDARY_RELAY = 0x45    // boundary sensors bundle to a relay
 };
 
-// --- Sequence ops ---
+// --- Sequence ops (legacy) ---
 enum : uint8_t {
   SEQ_START = 0x50,       // payload: SeqStartPayload (dir)
   SEQ_STOP  = 0x51
@@ -99,7 +98,7 @@ struct __attribute__((packed)) IcmMsgHdr {
   uint8_t  flags;    // bit0: ACK requested
   uint32_t ts;       // unix time
   uint16_t ctr;      // rolling counter (from master)
-  uint8_t  tok16[16];// first 16B of token
+  uint8_t  tok16[16];// first 16B of token (receiver's token)
 };
 static constexpr uint8_t HDR_FLAG_ACKREQ = 1 << 0;
 
@@ -119,7 +118,7 @@ struct __attribute__((packed)) SysSetChPayload {
 };
 
 // ============================================================================
-// SEQUENCE PAYLOADS
+// SEQUENCE PAYLOADS (legacy)
 // ============================================================================
 struct __attribute__((packed)) SeqStartPayload {
   uint8_t dir;     // SeqDir::UP or SeqDir::DOWN
@@ -131,78 +130,171 @@ struct __attribute__((packed)) SeqStartPayload {
 // ============================================================================
 // Temperature reply (used by PWR_GET_TEMP and REL_GET_TEMP)
 struct __attribute__((packed)) TempPayload {
-  int16_t tC_x100;   // temperature in °C × 100 (e.g. 3256 -> 32.56°C)
-  int16_t raw;       // optional raw ADC / sensor code (or 0 if N/A)
-  uint8_t ok;        // 1=valid reading, 0=not available
-  uint8_t src;       // sensor index/type at the module (freeform)
+  int16_t tC_x100;   // °C × 100
+  int16_t raw;       // optional raw ADC / code (or 0)
+  uint8_t ok;        // 1=valid, 0=N/A
+  uint8_t src;       // module-local source index/type
 };
 
 // Day/Night reply (used by SENS_GET_DAYNIGHT)
-// is_day: 1 = Day, 0 = Night
 struct __attribute__((packed)) DayNightPayload {
   uint8_t is_day;   // 1=day, 0=night
-  uint8_t ok;       // 1=valid, 0=not available
-  uint16_t raw;     // optional raw ADC/photoresistor code (or 0 if N/A)
-  uint8_t src;      // sensor index/type at the module (freeform)
+  uint8_t ok;       // 1=valid, 0=N/A
+  uint16_t raw;     // optional raw ADC/code
+  uint8_t src;      // module-local source index/type
 };
 
 // Power status block (for PWR_GET / async status)
 struct __attribute__((packed)) PowerStatusPayload {
   uint8_t  ver;        // =1 (bump if layout changes)
   uint8_t  on;         // 1=48V rail ON, 0=OFF
-  uint8_t  fault;      // bitfield (OVP/UVP/OCP/OTP/brownout…)
+  uint8_t  fault;      // bitfield (OVP/UVP/OCP/OTP/…)
   uint8_t  rsv;        // align
 
-  uint16_t vbus_mV;    // 48V bus voltage (mV)
-  uint16_t ibus_mA;    // 48V bus current (mA)
-  uint16_t vbat_mV;    // battery voltage (mV)
-  uint16_t ibat_mA;    // battery current (mA), +chg / –dischg, use signed if you prefer
+  uint16_t vbus_mV;    // 48V bus (mV)
+  uint16_t ibus_mA;    // 48V current (mA)
+  uint16_t vbat_mV;    // battery (mV)
+  uint16_t ibat_mA;    // battery (mA), +chg / –dischg
 
-  int16_t  tC_x100;    // board temperature *100 (optional; set 0 if N/A)
-  uint8_t  ok;         // 1=valid data, 0=not available
-  uint8_t  src;        // sensor id/source if you care, else 0
+  int16_t  tC_x100;    // board temp *100 (optional; 0 if N/A)
+  uint8_t  ok;         // 1=valid, 0=N/A
+  uint8_t  src;        // sensor id/source or 0
 };
 
 // ============================================================================
-// TOPOLOGY PAYLOADS
+// NEW TOPOLOGY PAYLOADS (zero-centered sensor model & relay boundaries)
 // ============================================================================
-// Relay next hop (sent to a relay node)
-struct __attribute__((packed)) TopoNextHop {
-  uint8_t  myIdx;       // relay index on the ICM (0..N-1)
-  uint8_t  reserved;    // align/future
-  uint8_t  nextMac[6];  // next relay MAC
-  uint32_t nextIPv4;    // next relay IPv4 (network order)
+
+// Relay coordinate entry as seen from a sensor (zero-centered index)
+struct __attribute__((packed)) ZcRelEntry {
+  uint8_t  relayIdx;       // 0..N-1 (ICM index)
+  int8_t   relPos;         // ...,-3,-2,-1, +1,+2,+3,... (0 is reserved for the sensor itself)
+  uint8_t  relayMac[6];    // MAC of that relay
+  uint8_t  relayTok16[16]; // token that RELAY expects in header (so sensor can talk to it)
 };
 
-// Sensor→target dependency (sent to a sensor node)
-struct __attribute__((packed)) TopoDependency {
-  uint8_t  sensIdx;     // 0..(ICM_MAX_SENSORS-1) or 0xFE/0xFF
-  uint8_t  targetType;  // 1=relay
-  uint8_t  targetIdx;   // relay index 0..N-1
-  uint8_t  reserved;    // align
-  uint8_t  targetMac[6];
-  uint32_t targetIPv4;  // network order
-};
+// Zero-centered bundle to a sensor: neighbors + ordered lists (neg and pos)
+struct __attribute__((packed)) TopoZeroCenteredSensor {
+  uint8_t  sensIdx;        // sensor index (0..ICM_MAX_SENSORS-1) or 0xFE/0xFF for specials
 
-// Sensor bundle with precomputed tokens for direct relay addressing
-struct __attribute__((packed)) TopoSensorBundle {
-  uint8_t  sensIdx;        // 0..(ICM_MAX_SENSORS-1) or 0xFE/0xFF
-  uint8_t  targetIdx;      // relay index 0..N-1
-  uint8_t  targetMac[6];   // where THIS sensor should send triggers
-  uint8_t  targetTok16[16];// token that TARGET RELAY expects in header
-  uint32_t targetIPv4;     // network order
-};
-
-// Relay bundle with prev/next references and corresponding tokens
-struct __attribute__((packed)) TopoRelayBundle {
-  uint8_t  myIdx;          // relay index 0..N-1
+  // Neighboring sensors for handoff (optional if at ends)
   uint8_t  hasPrev;        // 0/1
-  uint8_t  prevSensIdx;    // sensor index (or FE/FF) that precedes this relay in chain
-  uint8_t  prevSensMac[6]; // previous sensor MAC
-  uint8_t  prevSensTok16[16]; // token that PREV SENSOR expects (for optional acks)
+  uint8_t  prevSensIdx;
+  uint8_t  prevSensMac[6];
+  uint8_t  prevSensTok16[16]; // token that PREV SENSOR expects (if you want sensor->sensor acks)
+
   uint8_t  hasNext;        // 0/1
-  uint8_t  nextIdx;        // next relay index in chain
-  uint8_t  nextMac[6];     // next relay MAC
-  uint8_t  nextTok16[16];  // token that NEXT RELAY expects in header
-  uint32_t nextIPv4;       // next relay IPv4 (network order)
+  uint8_t  nextSensIdx;
+  uint8_t  nextSensMac[6];
+  uint8_t  nextSensTok16[16];
+
+  // Counts for variable-length arrays
+  uint8_t  nNeg;           // number of entries on the negative side (…,-3,-2,-1)
+  uint8_t  nPos;           // number on the positive side (+1,+2,+3,…)
+  uint16_t rsv;            // align
+
+  // Followed in the frame by: ZcRelEntry neg[nNeg], then ZcRelEntry pos[nPos]
+  // (ICM builds the two arrays contiguously)
 };
+
+// Deterministic split rule for the meeting of waves (optional hint)
+enum : uint8_t {
+  SPLIT_RULE_MAC_ASC_IS_POS_LEFT = 0,  // MAC(low)→MAC(high) defines + direction; map + to Left
+  SPLIT_RULE_WAVEID_PARITY       = 1   // even wave_id→Left, odd→Right
+};
+
+// Boundary bundle to a relay: who can command me (two sensors flanking me)
+struct __attribute__((packed)) TopoRelayBoundary {
+  uint8_t  myIdx;          // relay index 0..N-1
+
+  uint8_t  hasA;           // 0/1 — first boundary sensor (directionless naming)
+  uint8_t  aSensIdx;
+  uint8_t  aSensMac[6];
+  uint8_t  aSensTok16[16]; // optional: if relay will send ACKs/status to sensor
+
+  uint8_t  hasB;           // 0/1 — second boundary sensor
+  uint8_t  bSensIdx;
+  uint8_t  bSensMac[6];
+  uint8_t  bSensTok16[16]; // optional
+
+  uint8_t  splitRule;      // deterministic split hint (see enum)
+  uint8_t  rsv[3];
+};
+// ===== NEW SENSOR RAW PAYLOADS =====
+struct __attribute__((packed)) TfLunaRawPayload {
+  uint8_t  ver;        // =1
+  uint8_t  which;      // 0=both, 1=A, 2=B (sensor may still fill both)
+  uint16_t rate_hz;    // configured device rate (optional; 0 if N/A)
+
+  // A
+  uint16_t distA_mm;   // 0 if invalid
+  uint16_t ampA;       // TF-Luna strength/AMP if available, else 0
+  uint8_t  okA;        // 1=valid sample, 0=N/A
+
+  // B
+  uint16_t distB_mm;   // 0 if invalid
+  uint16_t ampB;
+  uint8_t  okB;
+
+  uint32_t t_ms;       // sensor-local monotonic ms when sampled
+};
+
+struct __attribute__((packed)) SensorEnvPayload {
+  uint8_t  ver;        // =1
+  // BME280
+  int16_t  tC_x100;    // °C *100 (from BME280)
+  uint16_t rh_x100;    // %RH *100
+  int32_t  p_Pa;       // pressure in Pa (or 0 if N/A)
+
+  // ALS (+ day/night mirror)
+  uint16_t lux_x10;    // lux *10 (or 0 if N/A)
+  uint8_t  is_day;     // 1=day, 0=night, 255=unknown
+
+  // Validity bits to be explicit
+  uint8_t  okT;        // temp valid
+  uint8_t  okH;        // humidity valid
+  uint8_t  okP;        // pressure valid
+  uint8_t  okL;        // lux valid
+};
+
+// ============================================================================
+// EXTENSIONS: Sensor↔Relay & Sensor↔Sensor commands
+// ============================================================================
+
+// --- Relay ops (extensions) ---
+enum : uint8_t {
+  REL_ON_FOR   = 0x24   // body: RelOnForPayload (L/R/Both on for duration)
+};
+
+// --- Sensor ops (extensions) ---
+enum : uint8_t {
+  SENS_WAVE_HDR  = 0x36   // body: WaveHdrPayload (lane, dir, speed, eta)
+};
+
+// ===== NEW INTERACTION PAYLOADS =====
+
+// Simple "turn-on for duration" command from a Sensor to a Relay.
+// Relay should enable the requested channel(s) immediately (or after `delay_ms`) for `on_ms`
+// then turn off automatically. TTL allows the relay to drop late frames if >0.
+enum : uint8_t { REL_CH_LEFT = 1<<0, REL_CH_RIGHT = 1<<1, REL_CH_BOTH = (REL_CH_LEFT|REL_CH_RIGHT) };
+struct __attribute__((packed)) RelOnForPayload {
+  uint8_t  ver;        // =1
+  uint8_t  chMask;     // bit0=Left, bit1=Right (REL_CH_*)
+  uint16_t on_ms;      // how long to stay ON before auto-OFF
+  uint16_t delay_ms;   // optional start delay (0 = immediate)
+  uint16_t ttl_ms;     // drop if received after now+ttl (0 = no TTL)
+  uint8_t  rsv[2];
+};
+
+// Compact wave header from Sensor -> next/prev Sensor to pre-arm the section.
+// Lets the neighbor skip recalculation and follow quickly.
+struct __attribute__((packed)) WaveHdrPayload {
+  uint8_t  ver;          // =1
+  uint8_t  lane;         // 0=Left, 1=Right
+  int8_t   dir;          // +1 = toward +pos relays, -1 = toward -neg
+  uint8_t  wave_id;      // optional identifier (0 if not used)
+  uint16_t speed_mmps;   // vehicle speed in mm/s
+  uint32_t eta_ms;       // estimated time until it reaches the neighbor boundary
+  uint8_t  rsv[2];
+};
+

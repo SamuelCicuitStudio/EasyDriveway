@@ -256,3 +256,45 @@ struct __attribute__((packed)) SensorEnvPayload {
   uint8_t  okP;        // pressure valid
   uint8_t  okL;        // lux valid
 };
+
+// ============================================================================
+// EXTENSIONS: Sensor↔Relay & Sensor↔Sensor commands
+// ============================================================================
+
+// --- Relay ops (extensions) ---
+enum : uint8_t {
+  REL_ON_FOR   = 0x24   // body: RelOnForPayload (L/R/Both on for duration)
+};
+
+// --- Sensor ops (extensions) ---
+enum : uint8_t {
+  SENS_WAVE_HDR  = 0x36   // body: WaveHdrPayload (lane, dir, speed, eta)
+};
+
+// ===== NEW INTERACTION PAYLOADS =====
+
+// Simple "turn-on for duration" command from a Sensor to a Relay.
+// Relay should enable the requested channel(s) immediately (or after `delay_ms`) for `on_ms`
+// then turn off automatically. TTL allows the relay to drop late frames if >0.
+enum : uint8_t { REL_CH_LEFT = 1<<0, REL_CH_RIGHT = 1<<1, REL_CH_BOTH = (REL_CH_LEFT|REL_CH_RIGHT) };
+struct __attribute__((packed)) RelOnForPayload {
+  uint8_t  ver;        // =1
+  uint8_t  chMask;     // bit0=Left, bit1=Right (REL_CH_*)
+  uint16_t on_ms;      // how long to stay ON before auto-OFF
+  uint16_t delay_ms;   // optional start delay (0 = immediate)
+  uint16_t ttl_ms;     // drop if received after now+ttl (0 = no TTL)
+  uint8_t  rsv[2];
+};
+
+// Compact wave header from Sensor -> next/prev Sensor to pre-arm the section.
+// Lets the neighbor skip recalculation and follow quickly.
+struct __attribute__((packed)) WaveHdrPayload {
+  uint8_t  ver;          // =1
+  uint8_t  lane;         // 0=Left, 1=Right
+  int8_t   dir;          // +1 = toward +pos relays, -1 = toward -neg
+  uint8_t  wave_id;      // optional identifier (0 if not used)
+  uint16_t speed_mmps;   // vehicle speed in mm/s
+  uint32_t eta_ms;       // estimated time until it reaches the neighbor boundary
+  uint8_t  rsv[2];
+};
+

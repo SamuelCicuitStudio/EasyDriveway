@@ -251,7 +251,7 @@ void ConfigManager::initializeVariables() {
     PutInt (COUNTER_KEY,        (int)(randomCounter % 100000)); // 5-digit counter
     PutBool(RESET_FLAG_KEY,     RESET_FLAG_DEFAULT);            // false
     PutBool(GOTO_CONFIG_KEY,    RESET_FLAG_DEFAULT);            // false
-    PutString(DEVICE_ID_KEY,    DEVICE_ID_DEFAULT);             // "PSM01"
+    PutString(DEVICE_ID_KEY,    DEVICE_ID_DEFAULT);             // "SSM01"
 
     // ---------------- Friendly name generation ------------------
     String mac = WiFi.macAddress();    // "24:6F:28:1A:2B:3C"
@@ -267,10 +267,10 @@ void ConfigManager::initializeVariables() {
         fused += pair + randChar;
     }
 
-    // Base names
-    String apBase     = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT;             // "PSM_"
-    String deviceName = apBase + fused;                                // e.g., "PSM_1AX2BW..."
-    String hostName   = String(WIFI_STA_HOST_DEFAULT) + "-" + macTail; // "PSM-1A2B3C"
+    // Base names (SSM)
+    String apBase     = DEVICE_WIFI_HOTSPOT_NAME_DEFAULT;              // "SSM_"
+    String deviceName = apBase + fused;                                 // e.g., "SSM_1AX2BW..."
+    String hostName   = String(WIFI_STA_HOST_DEFAULT) + "-" + macTail;  // "SSM-1A2B3C"
 
     // ---------------- Wireless / BLE ----------------------------
     // AP (hotspot) defaults
@@ -285,17 +285,17 @@ void ConfigManager::initializeVariables() {
     // Wi-Fi Station (STA) defaults
     PutString(WIFI_STA_SSID_KEY,            WIFI_STA_SSID_DEFAULT);   // ""
     PutString(WIFI_STA_PASS_KEY,            WIFI_STA_PASS_DEFAULT);   // ""
-    PutString(WIFI_STA_HOST_KEY,            hostName);                // "PSM-1A2B3C"
+    PutString(WIFI_STA_HOST_KEY,            hostName);                // "SSM-1A2B3C"
     PutInt   (WIFI_STA_DHCP_KEY,            WIFI_STA_DHCP_DEFAULT);   // 1 (DHCP)
 
     // ---------------- ESP-NOW / System Mode ---------------------
     PutInt(ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);
     PutInt(ESPNOW_MD_KEY, (int)ESPNOW_MD_DEFAULT);
 
-    // Short aliases used by PSMEspNowManager (optional mirror)
-    PutInt(PSM_ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);
-    PutString(PSM_TOKEN16_KEY, "");       // filled by SYS_INIT from ICM
-    PutString(PSM_MASTER_MAC_KEY, "");    // learned from first valid packet
+    // Short aliases used by SensorEspNowManager (SSM mirrors)
+    PutInt   (SSM_ESPNOW_CH_KEY, (int)ESPNOW_CH_DEFAULT);
+    PutString(SSM_TOKEN16_KEY,   "");     // filled by SYS_INIT from ICM
+    PutString(SSM_MASTER_MAC_KEY,"");     // learned from first valid packet
 
     // ---------------- User / Security ---------------------------
     PutString(PASS_PIN_KEY,  PASS_PIN_DEFAULT);
@@ -306,88 +306,73 @@ void ConfigManager::initializeVariables() {
     PutULong64(CURRENT_TIME_SAVED_KEY, CURRENT_TIME_SAVED_DEFAULT);
     PutULong64(LAST_TIME_SAVED_KEY,    LAST_TIME_SAVED_DEFAULT);
 
-    // ---------------- Hardware pin assignments (PSM) ------------
-    // SD card (SPI)
-    PutString(SD_CARD_MODEL_KEY, SD_CARD_MODEL_DEFAULT);
-    PutInt   (SD_MISO_PIN_KEY,   SD_MISO_PIN_DEFAULT);
-    PutInt   (SD_MOSI_PIN_KEY,   SD_MOSI_PIN_DEFAULT);
-    PutInt   (SD_CS_PIN_KEY,     SD_CS_PIN_DEFAULT);
-    PutInt   (SD_SCK_PIN_KEY,    SD_SCK_PIN_DEFAULT);
+    // ---------------- Hardware pin assignments (SSM) ------------
+    // SD card (SPI) — same pins / model
+    PutString(SD_CARD_MODEL_KEY, SD_CARD_MODEL_DEFAULT);  // "MKDV8GIL"
+    PutInt   (SD_MISO_PIN_KEY,   SD_MISO_PIN_DEFAULT);    // 39
+    PutInt   (SD_MOSI_PIN_KEY,   SD_MOSI_PIN_DEFAULT);    // 38
+    PutInt   (SD_CS_PIN_KEY,     SD_CS_PIN_DEFAULT);      // 41
+    PutInt   (SD_SCK_PIN_KEY,    SD_SCK_PIN_DEFAULT);     // 42
 
-    // I2C
-    PutInt   (I2C_SCL_PIN_KEY,   I2C_SCL_PIN_DEFAULT);
-    PutInt   (I2C_SDA_PIN_KEY,   I2C_SDA_PIN_DEFAULT);
+    // I2C buses
+    // I2C1 → TF-Luna A/B (I2C mode)
+    PutInt(I2C1_SDA_PIN_KEY, I2C1_SDA_PIN_DEFAULT);       // 4
+    PutInt(I2C1_SCL_PIN_KEY, I2C1_SCL_PIN_DEFAULT);       // 5
+    // I2C2 → VEML7700-TR + BME280
+    PutInt(I2C2_SDA_PIN_KEY, I2C2_SDA_PIN_DEFAULT);       // 16
+    PutInt(I2C2_SCL_PIN_KEY, I2C2_SCL_PIN_DEFAULT);       // 17
 
-    // Cooling & LEDs
-    PutInt(FAN_PWM_PIN_KEY,      FAN_PWM_PIN_DEFAULT);
-    PutInt(LED_R_PIN_KEY,        LED_R_PIN_DEFAULT);
-    PutInt(LED_G_PIN_KEY,        LED_G_PIN_DEFAULT);
-    PutInt(LED_B_PIN_KEY,        LED_B_PIN_DEFAULT);
+    // Cooling & LEDs — same pins
+    PutInt(FAN_PWM_PIN_KEY,  FAN_PWM_PIN_DEFAULT);        // 8
+    PutInt(LED_R_PIN_KEY,    LED_R_PIN_DEFAULT);          // 6
+    PutInt(LED_G_PIN_KEY,    LED_G_PIN_DEFAULT);          // 7
+    PutInt(LED_B_PIN_KEY,    LED_B_PIN_DEFAULT);          // 8  (kept same as your board)
 
-    // Temperature sensor
-    PutString(TEMP_SENSOR_MODEL_KEY,   TEMP_SENSOR_MODEL_DEFAULT);
-    PutString(TEMP_SENSOR_TYPE_KEY,    TEMP_SENSOR_TYPE_DEFAULT);
-    PutInt   (TEMP_SENSOR_PIN_KEY,     TEMP_SENSOR_PIN_DEFAULT);
-    PutBool  (TEMP_SENSOR_PULLUP_KEY,  TEMP_SENSOR_PULLUP_DEFAULT);
+    // Buzzer — same model/pin
+    PutString(BUZZER_MODEL_KEY,       BUZZER_MODEL_DEFAULT);        // "YS-MBZ12085C05R42"
+    PutInt   (BUZZER_PIN_KEY,         BUZZER_PIN_DEFAULT);          // 11
+    PutBool  (BUZZER_ACTIVE_HIGH_KEY, BUZZER_ACTIVE_HIGH_DEFAULT);  // 1
+    PutBool  (BUZZER_FEEDBACK_KEY,    BUZZER_FEEDBACK_DEFAULT);     // 1
 
-    // Power path controls & sensing
-    PutInt(PWR48_EN_PIN_KEY,      PWR48_EN_PIN_DEFAULT);
-    PutInt(PWR5V_EN_PIN_KEY,      PWR5V_EN_PIN_DEFAULT);
-    PutInt(MAINS_SENSE_PIN_KEY,   MAINS_SENSE_PIN_DEFAULT);
-    PutInt(VBAT_ADC_PIN_KEY,      VBAT_ADC_PIN_DEFAULT);
-    PutInt(V48_ADC_PIN_KEY,       V48_ADC_PIN_DEFAULT);
-    PutInt(I48_ADC_PIN_KEY,       I48_ADC_PIN_DEFAULT);
-    PutInt(IBAT_ADC_PIN_KEY,      IBAT_ADC_PIN_DEFAULT);     // NEW: battery current ADC
-    PutInt(CHARGER_EN_PIN_KEY,    CHARGER_EN_PIN_DEFAULT);
+    // ---------------- Sensor stack (SSM) ------------------------
+    // TF-Luna ×2 on I2C1
+    PutString(TFL_MODE_KEY,     TFL_MODE_DEFAULT);         // "I2C"
+    PutInt   (TFL_A_ADDR_KEY,   TFL_A_ADDR_DEFAULT);       // 0x10
+    PutInt   (TFL_B_ADDR_KEY,   TFL_B_ADDR_DEFAULT);       // 0x11
+    PutInt   (TF_NEAR_MM_KEY,   TF_NEAR_MM_DEFAULT);       // 200
+    PutInt   (TF_FAR_MM_KEY,    TF_FAR_MM_DEFAULT);        // 3200
+    PutInt   (AB_SPACING_MM_KEY,AB_SPACING_MM_DEFAULT);    // 350
 
-    // ---------------- Measurement scaling & thresholds ----------
-    // Voltage divider scales (ADC mV -> real mV)
-    PutInt(V48_SCALE_NUM_KEY, V48_SCALE_NUM_DEFAULT);
-    PutInt(V48_SCALE_DEN_KEY, V48_SCALE_DEN_DEFAULT);
-    PutInt(VBAT_SCALE_NUM_KEY, VBAT_SCALE_NUM_DEFAULT);
-    PutInt(VBAT_SCALE_DEN_KEY, VBAT_SCALE_DEN_DEFAULT);
+    // BME280 on I2C2
+    PutString(BME_MODEL_KEY,    BME_MODEL_DEFAULT);        // "BME280"
+    PutInt   (BME_ADDR_KEY,     BME_ADDR_DEFAULT);         // 0x76
 
-    // Fault thresholds
-    PutInt(VBUS_OVP_MV_KEY,  VBUS_OVP_MV_DEFAULT);
-    PutInt(VBUS_UVP_MV_KEY,  VBUS_UVP_MV_DEFAULT);
-    PutInt(IBUS_OCP_MA_KEY,  IBUS_OCP_MA_DEFAULT);
-    PutInt(VBAT_OVP_MV_KEY,  VBAT_OVP_MV_DEFAULT);
-    PutInt(VBAT_UVP_MV_KEY,  VBAT_UVP_MV_DEFAULT);
-    PutInt(IBAT_OCP_MA_KEY,  IBAT_OCP_MA_DEFAULT);
-    PutInt(OTP_C_KEY,        OTP_C_DEFAULT);
+    // VEML7700-TR on I2C2
+    PutString(ALS_MODEL_KEY,    ALS_MODEL_DEFAULT);        // "VEML7700-TR"
+    PutInt   (ALS_ADDR_KEY,     ALS_ADDR_DEFAULT);         // 0x10
+    PutInt   (ALS_T0_LUX_KEY,   ALS_T0_LUX_DEFAULT);       // 180
+    PutInt   (ALS_T1_LUX_KEY,   ALS_T1_LUX_DEFAULT);       // 300
 
-    // ---------------- ACS781 current sensors (two) --------------
-    // 1) IBUS (48V bus) sensor
-    PutString(ACS_BUS_MODEL_KEY,     ACS_BUS_MODEL_DEFAULT);
-    PutInt   (ACS_BUS_VREF_MV_KEY,   ACS_BUS_VREF_MV_DEFAULT);
-    PutInt   (ACS_BUS_ZERO_MV_KEY,   ACS_BUS_ZERO_MV_DEFAULT);
-    PutInt   (ACS_BUS_SENS_UVPA_KEY, ACS_BUS_SENS_UVPA_DEFAULT);
-    PutInt   (ACS_BUS_AVG_KEY,       ACS_BUS_AVG_DEFAULT);
-    PutBool  (ACS_BUS_INV_KEY,       ACS_BUS_INV_DEFAULT);
-    PutInt   (ACS_BUS_ATTEN_KEY,     ACS_BUS_ATTEN_DEFAULT);
+    // Fan thresholds (°C)
+    PutInt(FAN_ON_C_KEY,        FAN_ON_C_DEFAULT);         // 55
+    PutInt(FAN_OFF_C_KEY,       FAN_OFF_C_DEFAULT);        // 45
 
-    // 2) IBAT (battery) sensor
-    PutString(ACS_BAT_MODEL_KEY,     ACS_BAT_MODEL_DEFAULT);
-    PutInt   (ACS_BAT_VREF_MV_KEY,   ACS_BAT_VREF_MV_DEFAULT);
-    PutInt   (ACS_BAT_ZERO_MV_KEY,   ACS_BAT_ZERO_MV_DEFAULT);
-    PutInt   (ACS_BAT_SENS_UVPA_KEY, ACS_BAT_SENS_UVPA_DEFAULT);
-    PutInt   (ACS_BAT_AVG_KEY,       ACS_BAT_AVG_DEFAULT);
-    PutBool  (ACS_BAT_INV_KEY,       ACS_BAT_INV_DEFAULT);
-    PutInt   (ACS_BAT_ATTEN_KEY,     ACS_BAT_ATTEN_DEFAULT);
+    // Buzzer user settings
+    PutBool(BUZZER_ENABLE_KEY,  BUZZER_ENABLE_DEFAULT);    // 1
+    PutInt (BUZZER_VOLUME_KEY,  BUZZER_VOLUME_DEFAULT);    // 3
 
-    // ---------------- Topology / Versions -----------------------
-    PutString(DEV_FNAME_KEY,       DEV_FNAME_DEFAULT);
-    PutString(FW_VER_KEY,          FW_VER_DEFAULT);
-    PutString(SW_VER_KEY,          SW_VER_DEFAULT);
-    PutString(HW_VER_KEY,          HW_VER_DEFAULT);
-    PutString(BUILD_STR_KEY,       BUILD_STR_DEFAULT);
+    // Motion timing (TF-Luna confirmation / hold)
+    PutInt(CONFIRM_MS_KEY,      CONFIRM_MS_DEFAULT);       // 140
+    PutInt(STOP_MS_KEY,         STOP_MS_DEFAULT);          // 1200
 
-    // Buzzer (model + wiring + user feedback enable)
-    PutString(BUZZER_MODEL_KEY,        BUZZER_MODEL_DEFAULT);        // e.g. "YS-MBZ12085C05R42"
-    PutInt   (BUZZER_PIN_KEY,          BUZZER_PIN_DEFAULT);          // 3
-    PutBool  (BUZZER_ACTIVE_HIGH_KEY,  BUZZER_ACTIVE_HIGH_DEFAULT);  // true
-    PutBool  (BUZZER_FEEDBACK_KEY,     BUZZER_FEEDBACK_DEFAULT);     // 1 (enabled)
-    // Persist a flag if you want this to survive reboot; here we run inline mode
+    // ---------------- Module identity / versions ----------------
+    PutString(DEV_FNAME_KEY,    DEV_FNAME_DEFAULT);        // "SSM"
+    PutString(FW_VER_KEY,       FW_VER_DEFAULT);           // "1.0.0"
+    PutString(SW_VER_KEY,       SW_VER_DEFAULT);           // "1.0.0"
+    PutString(HW_VER_KEY,       HW_VER_DEFAULT);           // "A1"
+    PutString(BUILD_STR_KEY,    BUILD_STR_DEFAULT);        // "" (build hash, optional)
+
+    // Boot behavior
     PutBool(SERIAL_ONLY_FLAG_KEY, false);
 }
 /**

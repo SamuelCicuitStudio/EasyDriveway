@@ -64,6 +64,11 @@ public:  // ============================ TYPES & CALLBACKS =====================
     uint8_t    consecFails = 0;
     int        activeTx = -1;
     uint32_t   lastSeen = 0;
+    // --- PING state (ICM side) ---
+    uint32_t   pendingPingNonce = 0;   // nonce we originated (awaiting echo)
+    uint32_t   pingSentMs       = 0;   // when we sent it (for RTT)
+    uint32_t   lastEchoedNonce  = 0;   // last nonce we echoed back
+    uint32_t   lastEchoedMs     = 0;   // when we echoed (loop guard window)
   };
 
 public:  // ============================ LIFECYCLE & GLOBAL ============================
@@ -91,6 +96,7 @@ public:  // ============================ LIFECYCLE & GLOBAL ====================
   bool setChannel(uint8_t ch, bool persist=true);
   bool setSystemModeAuto(bool persist);
   bool setSystemModeManual(bool persist);
+  bool sysPing(ModuleType t, uint8_t index);  // send PING (ICM->peer)
 
   // Utilities
   static String macBytesToStr(const uint8_t mac[6]);

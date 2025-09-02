@@ -1,210 +1,143 @@
-# Sensor Module Firmware (Presence Board) — HW Profile: TF-Luna ×2 + BME + VEML7700 + Buzzer + Fan
+# Sensor Module (Presence/Direction Node) — TF-Luna ×2 + BME280 + VEML7700 + Buzzer + Fan
 
-ESP32-based **presence/direction** node for EasyDriveWay.
-This hardware profile uses:
-
-- **2× Benewake TF-Luna** (A/B distance probes)
-- **1× BME** (BME280/BME680) for **temperature, humidity, pressure**
-- **1× VEML7700-TR** for **ambient light** (day/night)
-- **Buzzer** (events/alerts) and **Fan** (thermal management)
-
-The node participates in the ESP-NOW mesh managed by ICM, consumes a **zero-centered topology**, and sends **token-gated** schedules to relays.
+ESP32-based sensor node that detects motion and direction on a single section, computes speed from two ToF probes, and drives nearby relays in a chaser pattern (**1-2-3** or **3-2-1**) via ESP-NOW. The node also reports environment (temp/humidity/pressure), ambient light (lux, day/night), and manages its own cooling. It participates in an ICM-managed mesh and persists its topology & tokens to NVS.&#x20;
 
 ---
 
-## TL;DR
+## Hardware profile (this build)
 
-- Two **TF-Luna** modules provide **A/B distances (mm)** used to detect **presence, direction (A→B / B→A), speed**, **stop/resume**.
-- **BME** supplies `tC`, `rh`, `p_Pa` (°C, %RH, Pa).
-- **VEML7700** provides `lux`; day/night derived in firmware using configured thresholds.
-- **Buzzer** signals pairing, faults, and optional motion events; **Fan** auto-controls on thermal thresholds.
-- Sensor reports are exposed via the same UI/debug endpoints the app polls every 1 s.
+- **TF-Luna ×2** on **I²C1** for presence/direction/speed
+  SDA = **GPIO4**, SCL = **GPIO5** (addresses configurable by the board; see provisioning below)
+- **BME280** on **I²C2** for environment (temp °C, humidity %, pressure Pa)
+  SDA = **GPIO16**, SCL = **GPIO17**
+- **VEML7700-TR** on **I²C2** for ambient light (lux → day/night)
+  Address typically `0x10` (configurable)&#x20;
+- **Buzzer** on **GPIO11** for user feedback (pairing, provisioning, faults)
+- **Fan (PWM)** for enclosure cooling (same pin as before; PWM controlled by CoolingManager)&#x20;
+- RGB status LED pins unchanged from previous board
 
----
-
-## Hardware Overview
-
-### Sensors
-
-- **TF-Luna x2** (A & B):
-
-  - **Interface:** UART (default 115200 8N1) or I²C (if your module/bridge supports it).
-  - **Outputs (per sensor):** distance **mm**, signal strength (amplitude), and a quality/valid bit.
-  - **Mounting:** A and B are placed along the traffic flow (≈25–50 cm apart). Direction derives from which probe trips first.
-
-- **BME** (BME280/BME680):
-
-  - **Interface:** I²C (typ. `0x76` or `0x77`), SPI optional.
-  - **Outputs:** temperature (°C), humidity (%), pressure (Pa).
-
-- **VEML7700-TR**:
-
-  - **Interface:** I²C (`0x10`).
-  - **Outputs:** ambient light (lux). Firmware applies day/night thresholds with hysteresis.
-
-### Actuators
-
-- **Buzzer:** driven by GPIO (optional short PWM beeps).
-- **Fan:** on/off or PWM pin; governed by temperature thresholds (with hysteresis).
-
-> Provide your exact pins in `hw_pins.h` (UART RX/TX for each TF-Luna, I²C SDA/SCL, buzzer, fan).
+> Storage: external flash “MKDV8GIL” (unchanged pins), used by logging/NVS as before.
 
 ---
 
-## Zero-Centered Topology (ICM → Sensor)
+## What the board does (at a glance)
 
-Sensor receives a **TopoZeroCenteredSensor** from ICM:
-
-```jsonc
-{
-  "sensIdx": 7,
-  "hasPrev": true,
-  "prevIdx": 6,
-  "prevMac": "02:..:A6",
-  "prevTok16": "<16b>",
-  "hasNext": true,
-  "nextIdx": 8,
-  "nextMac": "02:..:A8",
-  "nextTok16": "<16b>",
-  "neg": [
-    { "relayIdx": 12, "pos": -1, "relayMac": "02:..:C1", "relayTok16": "<16b>" }
-  ],
-  "pos": [
-    { "relayIdx": 13, "pos": +1, "relayMac": "02:..:C2", "relayTok16": "<16b>" }
-  ]
-}
-```
-
-- `neg[]`: ordered relays to the **left** (−1 nearest)
-- `pos[]`: ordered relays to the **right** (+1 nearest)
-- Each neighbor/relay carries a **16-byte token** for authenticated ESP-NOW commands.
-
-Relays also receive **boundary links** so they can drive **Left/Right** outputs independently.
+1. **Detects traffic:** reads TF-Luna **A/B** distances, derives **direction** (A→B or B→A), **speed** (Δx/Δt), and **stop/resume**.
+2. **Drives relays:** uses the **ICM-pushed topology** to find relays on its **negative (−1, −2, …)** and **positive (+1, +2, …)** sides and sends token-authenticated commands to play a wave (**1-2-3** or **3-2-1**) with the correct per-relay delay based on speed.
+3. **Shares wave headers:** optionally sends neighbors a compact **wave header** (lane, dir, speed, ETA) so they can pre-arm instead of re-computing.
+4. **Reports environment & light:** BME280 → temp/humidity/pressure; VEML7700 → lux with day/night hysteresis. &#x20;
+5. **Manages cooling:** CoolingManager reads BME temperature and sets PWM duty to the fan according to thresholds/hysteresis (AUTO or manual).&#x20;
+6. **Gives feedback:** buzzer beeps on pairing/topology receipt, provisioning steps, and fault conditions.
 
 ---
 
-## Pairing & Security
+## Topology (what the sensor receives from ICM)
 
-- ICM pairs each peer (sensor/relay) and issues tokens.
-- Sensor **stores topology + tokens** in NVS.
-- All sensor→relay/sensor→sensor frames include ICM MAC, sender/recipient, and **recipient token** (see Command API in firmware).
+- **Neighbors:** `hasPrev/prevIdx/prevMac/prevTok16` and `hasNext/nextIdx/nextMac/nextTok16` (stored in NVS as compact keys).
+- **Local relays:** two ordered lists:
 
----
+  - `neg[]` → **left** side (−1 nearest), each with `{ relayIdx, pos, relayMac, relayTok16 }`
+  - `pos[]` → **right** side (+1 nearest), same fields
 
-## Runtime Logic (This Hardware)
-
-### A/B motion & direction (TF-Luna)
-
-- Each loop captures **`distA_mm`, `ampA`, `okA`** and **`distB_mm`, `ampB`, `okB`**.
-- Presence triggers when distance crosses a **range gate** (configurable `TF_NEAR_MM … TF_FAR_MM`) and `ok*` is true.
-- **Direction** is derived from first-to-trigger ordering (A then B → A→B).
-- **Speed** from known A↔B spacing and Δt.
-- **Stop/Hold** if distance stabilizes in-range for `stop_timeout_ms`.
-
-### Environment (BME)
-
-- Read **`tC`**, **`rh`**, **`p_Pa`** each cycle.
-- Firmware may optionally low-pass filter or median filter readings.
-
-### Day/Night (VEML7700)
-
-- Read **`lux`**, compare to thresholds:
-
-  - `ALS_T0` (day→night down-cross), `ALS_T1` (night→day up-cross) with hysteresis.
-
-- Export `is_day = 1|0`.
-
-### Buzzer & Fan
-
-- **Buzzer:** short patterns for **pair OK**, **topology received**, **fault** (sensor read timeout, token mismatch).
-- **Fan:** governed by temperature:
-
-  - `FAN_T_ON` (°C) to engage; `FAN_T_OFF` (°C) to disengage.
-  - If PWM, clamp duty between `FAN_PWM_MIN…FAN_PWM_MAX` based on `tC`.
+- The class persists MACs/tokens and adds peers to ESP-NOW, so later sends are one-liners that automatically use the **receiver’s token** (relay or neighbor). (See _Relay control_ and _Neighbor wave handoff_ below.)
 
 ---
 
-## Firmware ↔ UI (Debug Proxies)
+## Relay control (sensor → relay)
 
-The UI polls once per second when this sensor is selected:
+When the board detects motion, it builds a wave based on **direction** and **speed**:
 
-- `POST /api/sensor/env { mac }` →
-  `{ ok:true, tC: 28.3, rh: 51.2, p_Pa: 100870, lux: 320, is_day: 1 }`
-- `POST /api/sensor/tfraw { mac, which: 2 }` →
-  `{ ok:true, distA_mm: 740, ampA: 182, okA: 1, distB_mm: 1180, ampB: 175, okB: 1 }`
-- (Fallback for local mock) `POST /api/sensor/read { mac }` →
-  `{ tempC, humidity, pressure_hPa, lux, tf_a, tf_b }`
+- Direction **A→B** → go to **`pos[]`** and play **1-2-3** (nearest to farthest).
+- Direction **B→A** → go to **`neg[]`** and play **3-2-1** (farthest to nearest).
+- Step interval: `step_ms = spacing_mm / speed_mmps`, clamped for smoothness (e.g., 80..300 ms).
+- Optional “all-on” flash before stepping, to make the wave feel snappier.
 
-> If your firmware exposes only ESP-NOW, the ICM bridge should **map your telemetry** to the fields above so the UI renders `Temp/Humidity/Pressure/Lux` and `TF-A/TF-B`.
+The sensor sends a centralized “turn on for duration” command to each relay with a per-relay `delay_ms` that creates the chaser pattern. (A helper fans this out across the side lists using the stored MACs and tokens, so you don’t hand-assemble frames.)
 
 ---
 
-## Schedules (Sensor → Relay)
+## Neighbor wave handoff (sensor → sensor)
 
-On **ACTIVE**:
+Upon confirming direction/speed, the board can ping **prev/next** sensor with a small header containing:
 
-- Build per-relay timelines toward `pos[]` (**forward**) or `neg[]` (**reverse**).
-- Initial **all-on flash** then step **+1→+N** (or **−1→−N**).
-- HOLD freezes; RESUME continues.
-- Binary packet carries `{ relayIdx, tok16, baseTs, steps[], ttl }`.
-- Relays verify token, queue, and ACK; late packets are dropped.
+- `lane` (0=Left, 1=Right), `dir` (+1 toward +side / −1 toward −side)
+- `speed_mmps`, and `eta_ms` (to the neighbor boundary)
 
----
-
-## NVS Keys (this profile)
-
-- `S_IDX` — sensor index (0..N, 254=ENTR, 255=PARK)
-- `S_PIDX`/`S_NIDX`, `S_PMAC`/`S_NMAC`, `S_PTK`/`S_NTK`
-- `Z_NEG`, `Z_POS` — local relay map (serialized entries with `{idx,pos,mac,tk}`)
-- `ALS_T0`, `ALS_T1` — lux thresholds (hysteresis)
-- `TF_NEAR_MM`, `TF_FAR_MM`, `CONFIRM_MS`, `STOP_MS`
-- `FAN_T_ON`, `FAN_T_OFF`, `FAN_PWM_MIN`, `FAN_PWM_MAX`
-- `BUZ_EN`, `BUZ_VOL` (if applicable)
+This lets the neighbor prepare its own wave immediately, without waiting to re-estimate speed locally.
 
 ---
 
-## Recommended Defaults
+## TF-Luna address provisioning (double/triple-tap wizard)
 
-- `CONFIRM_MS`: **140 ms** (TF-Luna)
-- `STOP_MS`: **1200 ms**
-- `A_B_SPACING_MM`: **350 mm**
-- `ALS_T0/T1 (lux)`: **180 / 300** (tune for your site)
-- `FAN_T_ON/OFF (°C)`: **55 / 45** (enclosure & fan dependent)
+To simplify wiring and keep addresses consistent:
 
----
+- **Double-tap** the user button → “**Assign A**” wizard
+  Expect **exactly one** TF-Luna connected on I²C1; the board scans, assigns the NVS-configured **A address**, saves, and beeps OK (or error).
+- **Triple-tap** the user button → “**Assign B**” wizard
+  Same procedure for the **B address**.
 
-## LEDs & Diagnostics
-
-- **RUN:** heartbeat; rapid during pairing
-- **TRG:** pulses on A/B triggers; steady while HOLD
-- UART optional: logs A/B edges, direction, speed, env telemetry, fan state
+You can connect the first sensor, double-tap to make it **A**, then connect the second and triple-tap to make it **B**. The buzzer provides entry/success/error tones during the procedure.
 
 ---
 
-## Test Checklist
+## Environment sensing (BME280)
 
-1. Pair with ICM; verify `/api/topology/get` shows `neg/pos` and neighbor tokens.
-2. Move a target past **A then B** → **A→B** direction & forward schedule (pos\[]) fires.
-3. Move **B then A** → reverse schedule (neg\[]).
-4. Stop between A/B → HOLD; moving again resumes.
-5. Shade ALS → `is_day` flips; UI shows Day/Night.
-6. Heat board past `FAN_T_ON` → fan engages; cool below `FAN_T_OFF` → off.
-7. Buzzer beeps on pair/topology; fault pattern on sensor timeout (if enabled).
+- The **BME280Manager** provides `tC`, `rh`, and `p_Pa`.
+- Cooling and telemetry use this data; CoolingManager’s AUTO mode adjusts fan PWM vs. temperature thresholds with hysteresis.&#x20;
+
+---
+
+## Ambient light (VEML7700-TR)
+
+- The **VEML7700Manager** initializes the ALS on **I²C2** using pins/addr from NVS, reads **lux**, and computes **day/night** with hysteresis (`ALS_T0/ALS_T1`).
+- You can fetch current lux and a debounced day/night state for UI or brightness profiles.&#x20;
+
+---
+
+## Cooling (fan PWM) logic
+
+- **CoolingManager** runs as an RTOS task, reads **BME** temperature, and selects **ECO / NORMAL / FORCED / STOPPED / AUTO** modes.
+- In **AUTO**, it applies thresholds like `COOL_TEMP_ECO_ON_C`, `COOL_TEMP_NORM_ON_C`, `COOL_TEMP_FORCE_ON_C`, with **hysteresis**, mapping to preset duty cycles (e.g., 30/60/100%).
+- It logs changes at a throttled cadence and exposes last temperature/pressure/humidity and applied duty.&#x20;
+
+---
+
+## UI & polling
+
+- The UI (or ICM bridge) typically polls this sensor every **1 s** when selected:
+
+  - **Environment:** `{ tC, rh, p_Pa, lux, is_day }`
+  - **ToF raw:** `{ distA_mm, ampA, okA, distB_mm, ampB, okB }`
+
+- The board can also push or expose summarized state for quick diagnostics.&#x20;
+
+---
+
+## Commissioning checklist
+
+1. **Pair** with ICM so the sensor knows its master and tokens.
+2. **Provision TF-Luna addresses:** connect one sensor at a time on I²C1 → **double-tap** (A), **triple-tap** (B); buzzer confirms.
+3. **Verify topology** was received (neighbors + relay lists).
+4. **Walk test:** move target A→B and B→A; verify chaser plays on the correct side with coherent speed.
+5. Cover/uncover ALS to confirm **day/night** transitions; warm the enclosure to see **fan** engage.
 
 ---
 
 ## Troubleshooting
 
-- **No A/B distances:** check TF-Luna UART wiring/baud (or I²C mode).
-- **Env missing:** verify BME address (`0x76/0x77`) and pull-ups.
-- **Lux 0:** check VEML7700 address (`0x10`) and integration time.
-- **UI shows “—”:** ensure the bridge returns the expected fields for `/api/sensor/env` and `/api/sensor/tfraw`.
-- **Fan always on:** lower `FAN_T_ON`/raise `FAN_T_OFF` hysteresis; verify temp source (BME vs. internal).
+- **No ToF data:** verify only one unit is connected during provisioning; confirm I²C1 pull-ups and addresses; try re-assigning A/B.
+- **Relays don’t light:** check topology (this sensor’s `neg/pos` lists), token mismatch, or timebase skew (late packets dropped).
+- **Fan always on/off:** check thresholds/hysteresis and that BME is healthy; verify PWM pin and LEDC channel.&#x20;
+- **Lux stuck:** confirm VEML7700 address and I²C2 wiring; integration settings in ALS driver.&#x20;
 
 ---
 
-## License
+## Source modules in this repo
 
-Proprietary — © ICM / EasyDriveWay
+- **VEML7700Manager** — ALS init, read, and day/night helper (I²C2)&#x20;
+- **CoolingManager** — fan PWM control with BME-based thermostat (RTOS task)&#x20;
+- **(This README baseline)** — earlier profile summary retained & expanded here&#x20;
 
 ---
+
+**Proprietary — © ICM / EasyDriveWay**

@@ -144,3 +144,17 @@ bool ESPNowManager::presenceGetEnv(uint8_t idx) {
   PeerRec* pr=nullptr; if(!ensurePeer(ModuleType::PRESENCE, idx, pr)) return false;
   return enqueueToPeer(pr, CmdDomain::SENS, SENS_GET_ENV, nullptr, 0, true);
 }
+bool ESPNowManager::sysPing(ModuleType t, uint8_t index) {
+  PeerRec* pr = findPeer(t, index);
+  if (!pr || !pr->used) return false;
+
+  // Generate a non-zero nonce
+  uint32_t n = (uint32_t)random();   // Arduino random() is fine; non-cryptographic
+  if (n == 0) n = 1;
+
+  pr->pendingPingNonce = n;
+  pr->pingSentMs       = millis();
+
+  // Echo policy: no ACK; sensor will reflect back same payload.
+  return enqueueToPeer(pr, CmdDomain::SYS, SYS_PING, (uint8_t*)&n, sizeof(n), /*requireAck=*/false);
+}

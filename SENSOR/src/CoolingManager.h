@@ -1,10 +1,9 @@
 #pragma once
 #include <Arduino.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
 #include "Config.h"
 #include "ConfigManager.h"
-#include "ICMLogFS.h"   // <-- for logging
+#include "ICMLogFS.h"
+#include "BME280Manager.h"   // <-- use BME280 as the temperature source
 
 // ==== RTOS task config ====
 #ifndef COOLING_TASK_CORE
@@ -71,8 +70,9 @@ class CoolingManager {
 public:
     enum Mode : uint8_t { COOL_STOPPED=0, COOL_ECO, COOL_NORMAL, COOL_FORCED, COOL_AUTO };
 
-    CoolingManager(ConfigManager* cfg, ICMLogFS* log = nullptr)
-        : _cfg(cfg), _log(log) {}
+    // New: takes a BME280Manager* (temperature/humidity/pressure provider)
+    CoolingManager(ConfigManager* cfg, BME280Manager* bme, ICMLogFS* log = nullptr)
+        : _cfg(cfg), _bme(bme), _log(log) {}
 
     bool begin();
     void end();
@@ -87,13 +87,16 @@ public:
     void setPresetSpeeds(uint8_t ecoPct, uint8_t normPct, uint8_t forcePct);
 
     // Runtime info
-    float lastTempC()     const { return _lastTempC; }
-    uint8_t lastSpeedPct()const { return _lastSpeedPct; }
-    Mode modeApplied()    const { return _modeApplied; }
-    Mode modeRequested()  const { return _modeUser; }
+    float lastTempC()      const { return _lastTempC; }
+    float lastHumidityRH() const { return _lastRH; }
+    float lastPressurePa() const { return _lastP; }
+    uint8_t lastSpeedPct() const { return _lastSpeedPct; }
+    Mode modeApplied()     const { return _modeApplied; }
+    Mode modeRequested()   const { return _modeUser; }
 
     // Dependency injection after construction
     void setLogger(ICMLogFS* log) { _log = log; }
+    void setBME(BME280Manager* bme) { _bme = bme; }
 
 private:
     // Task plumbing
@@ -102,7 +105,6 @@ private:
 
     // Hardware
     void setupPWM();
-    void setupSensor();
     void writeFanPercent(uint8_t pct);
     uint32_t pctToDuty(uint8_t pct) const { return (uint32_t)((_dutyMax * (uint32_t)pct) / 100U); }
 
@@ -118,17 +120,12 @@ private:
     void logSensorFault(const char* what);
 
 private:
-    ConfigManager*  _cfg = nullptr;
-    ICMLogFS*       _log = nullptr;
+    ConfigManager*   _cfg  = nullptr;
+    BME280Manager*   _bme  = nullptr;   // <-- sensor dependency
+    ICMLogFS*        _log  = nullptr;
 
     // Pins / HW
     int _pinFanPwm = FAN_PWM_PIN_DEFAULT;
-    int _pinTemp   = TEMP_SENSOR_PIN_DEFAULT;
-    bool _tempPullup = TEMP_SENSOR_PULLUP_DEFAULT;
-
-    // Sensor
-    OneWire*           _oneWire = nullptr;
-    DallasTemperature* _sensors = nullptr;
 
     // Task
     TaskHandle_t _task = nullptr;
@@ -143,12 +140,14 @@ private:
     uint8_t _forcePct = COOL_SPEED_FORCE_PCT;
 
     // State
-    Mode    _modeUser    = COOL_AUTO;
-    Mode    _modeApplied = COOL_STOPPED;
-    float   _lastTempC   = NAN;
+    Mode    _modeUser     = COOL_AUTO;
+    Mode    _modeApplied  = COOL_STOPPED;
+    float   _lastTempC    = NAN;
+    float   _lastRH       = NAN;
+    float   _lastP        = NAN;
     float   _lastLoggedTempC = NAN;
-    uint8_t _lastSpeedPct= 0;
-    uint32_t _dutyMax    = (1u << COOLING_LEDC_RES_BITS) - 1u;
+    uint8_t _lastSpeedPct = 0;
+    uint32_t _dutyMax     = (1u << COOLING_LEDC_RES_BITS) - 1u;
 
     // Log throttling
     uint32_t _periodCounter = 0;
