@@ -34,7 +34,7 @@ public:
    * @param hub  Optional I2CBusHub used to acquire ENV bus.
    * @param wire Optional TwoWire; if null, ENV bus from hub/static hub is used.
    */
-  explicit VEML7700Manager(NvsManager* cfg, I2CBusHub* bus = nullptr, TwoWire* wire = nullptr) : _cfg(cfg), _hub(hub), _wire(wire) {}
+  explicit VEML7700Manager(NvsManager* cfg, I2CBusHub* bus = nullptr, TwoWire* wire = nullptr) : _cfg(cfg), _bus(bus), _wire(wire) {}
 
   /**
    * @brief Set/override the active TwoWire.

@@ -26,6 +26,8 @@
 #include "LogFS_Commands.h"
 #include "RTCManager.h"
 
+class RTCManager;
+
 /**
  * @brief SD-based log manager with UART command API and RTC-aware timestamps.
  * @details

@@ -22,8 +22,8 @@
 // Role selection (define exactly one before including this file)
 // (Determines some role-specific defaults like KIND__/DEFNAM)
 // ============================================================
-#define NVS_ROLE_ICM
-//#define NVS_ROLE_SENS
+//#define NVS_ROLE_ICM
+#define NVS_ROLE_SENS
 //#define NVS_ROLE_RELAY
 //#define NVS_ROLE_PMS
 

@@ -23,11 +23,11 @@
 #include "LogFS.h"
 
 #if defined(NVS_ROLE_REMU)
-  #include "Hardware/HARDWARE_REMU.h"   // SR_* + REL_CH_COUNT
+  #include "Hardware/HardwareE_REMU.h"   // SR_* + REL_CH_COUNT
 #elif defined(NVS_ROLE_RELAY)
-  #include "Hardware/HARDWARE_REL.h"    // RELAYx_OUT_PIN
+  #include "Hardware/Hardware_REL.h"    // RELAYx_OUT_PIN
 #elif defined(NVS_ROLE_PMS)
-  #include "Hardware/HARDWARE_PMS.h"    // REL_SRC_* pins
+  #include "Hardware/Hardware_PMS.h"    // REL_SRC_* pins
 #endif
 
 /**

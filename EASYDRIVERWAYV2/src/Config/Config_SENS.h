@@ -64,6 +64,11 @@
 #define LEAD_CNT_DEFAULT            3
 #define LEAD_STP_MS_DEFAULT         250
 
+/** @section TFluna Address behavior */
+#define TFL_A_ADDR_KEY              "TFAADR"   // I2C addr for TF-Luna A
+#define TFL_B_ADDR_KEY              "TFBADR"   // I2C addr for TF-Luna B
+
+
 // Neighbor & mapping arrays exist in NVSConfig.h
 
 #endif /* CONFIG_SENS_H */

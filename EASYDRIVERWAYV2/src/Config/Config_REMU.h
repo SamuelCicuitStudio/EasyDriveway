@@ -16,27 +16,31 @@
 
 #include "Config_Common.h"
 
-// Module log mapping (from common)
+// Log mapping
 #ifndef LOGFILE_PATH
-#define LOGFILE_PATH            LOGFILE_PATH_REMU
+  #define LOGFILE_PATH            LOGFILE_PATH_REMU
 #endif
 #ifndef LOG_FILE_PATH_PREFIX
-#define LOG_FILE_PATH_PREFIX    LOG_FILE_PREFIX_REMU
+  #define LOG_FILE_PATH_PREFIX    LOG_FILE_PREFIX_REMU
 #endif
 
-/** @section REMU role keys (not duplicating NVSConfig) */
-// RCOUNT exists in NVSConfig.h (default 16).
+/** Global defaults (device-level) */
+#define RPULSE_MS_KEY   "RPULMS"   // u16: default ON pulse for all relays (ms)
+#define RPULSE_MS_DEF   500
 
-/** @section Default pulse for all virtual relays (ms) */
-#define RPULSE_MS_KEY               "RPULMS"
-#define RPULSE_MS_DEF               500
+#define RHOLD_MS_KEY    "RHLDMS"   // u16: default max ON (safety cap) (ms)
+#define RHOLD_MS_DEF    30000
 
-/** @section Interlock groups bitmap (JSON) */
-#define RILOCK_JS_KEY               "RILCKJ"
-#define RILOCK_JS_DEF               "[]"
+#define RREP_MS_KEY     "RREPMS"   // u16: report cadence (ms)
+#define RREP_MS_DEF     1000
 
-/** @section Report cadence (ms) */
-#define RREP_MS_KEY                 "RREPMS"
-#define RREP_MS_DEF                 1000
+// Interlock groups as JSON array (device-level)
+#define RILOCK_JS_KEY   "RILCKJ"   // json: e.g. [[0,1],[2,3,4]]
+#define RILOCK_JS_DEF   "[]"
+
+/** Per-virtual (prefix + index 0..RCOUNT-1) overrides */
+#define RPULSE_MS_PFX   "RPLMS_"   // u16 per relay ON pulse override
+#define RHOLD_MS_PFX    "RHOMS_"   // u16 per relay HOLD cap override
+// (Boundary mapping per virtual relay is handled by formats in NVSConfig.h)
 
 #endif /* CONFIG_REMU_H */

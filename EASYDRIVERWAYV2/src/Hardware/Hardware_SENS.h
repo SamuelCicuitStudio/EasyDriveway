@@ -38,9 +38,6 @@
 #define I2C_SYS_SCL_PIN        33
 /** @brief System I2C SDA (TF-Luna pair, no mux) */
 #define I2C_SYS_SDA_PIN        34
-/** @brief System I2C frequency (Hz) */
-#define I2C_SYS_HZ             400000UL
-
 /** @brief TF-Luna A I2C address */
 #define TFL_ADDR_A             0x10
 /** @brief TF-Luna B I2C address */
@@ -51,7 +48,13 @@
 /** @brief Environmental I2C SDA (BME280 + VEML7700) */
 #define I2C_ENV_SDA_PIN        36
 /** @brief Environmental I2C frequency (Hz) */
-#define I2C_ENV_HZ             400000UL
+#define I2C_ENV_HZ             100000UL
+/** @brief System I2C frequency (Hz) */
+#if defined(NVS_ROLE_ICM)
+  #define I2C_SYS_HZ I2C_ENV_HZ
+#else
+  #define I2C_SYS_HZ 400000UL
+#endif
 /** @brief BME280 I2C address */
 #define BME280_I2C_ADDR        0x76
 /** @brief VEML7700 I2C address */

@@ -19,11 +19,11 @@
 #include "LogFS.h"
 
 #if defined(NVS_ROLE_REMU)
-  #include "Hardware/HARDWARE_REMU.h"
+  #include "Hardware/Hardware_REMU.h"
 #elif defined(NVS_ROLE_RELAY)
-  #include "Hardware/HARDWARE_REL.h"
+  #include "Hardware/Hardware_REL.h"
 #elif defined(NVS_ROLE_PMS)
-  #include "Hardware/HARDWARE_PMS.h"
+  #include "Hardware/Hardware_PMS.h"
 #endif
 
 /**
