@@ -1,0 +1,248 @@
+Absolutely — I folded in a clear, explicit **“what each device remembers”** model (pairing + topology) for all six roles, including **per-virtual memory** for **SEMU/REMU**. Nothing optional, all aligned to your strict **6-char NVS key** schema and the code you’ve built.
+
+---
+
+# Optimized Specification for ESP-NOW Driveway Light Control System (Rev. B)
+
+## 1) System Overview
+
+A distributed **ESP-NOW** network of six module types:
+
+- **ICM (Control Unit)** — time master, topology manager, web UI.
+- **PMS (Power Management Unit)** — power rails, source selection, telemetry.
+- **SENS (Sensor Module)** — detects presence/direction, drives relays ahead.
+- **REL (Relay Module)** — actuates driveway lights.
+- **SEMU (Sensor Emulator)** — one physical device exposes **N virtual sensors** (default `SCOUNT=8`).
+- **REMU (Relay Emulator)** — one physical device exposes **M virtual relays** (default `RCOUNT=16`).
+
+All modules share a common HW/SW baseline; build selects role with `#define NVS_ROLE_*`.
+
+---
+
+## 2) Hardware Architecture
+
+### 2.1 Common Baseline
+
+- **ESP32-S3**, 48V→5V + reverse-polarity, 1 GB SPI NAND (MKDV8GIL-AST) for logs, fan (PWM MOSFET), buzzer, onboard LED.
+- SD/NAND SPI mapping unified across roles.
+
+### 2.2 Module-Specific
+
+- **ICM**: DS3231 RTC (time master), DS18B20, RGB LED.
+- **PMS**: DS18B20, ACS781 (wall/batt current), relays/drivers for source & rails, wall/batt voltage dividers.
+- **SENS**: 1× TF-Luna pair (I²C), BME280, VEML7700.
+- **REL**: 2× relay outputs (direct drivers), DS18B20.
+- **SEMU**: TCA9548A mux → up to 8 TF-Luna pairs; env bus shared.
+- **REMU**: 74HC595×2 → 16 outputs; SER/SRCLK/RCLK/OE/MR.
+
+> Production modules avoid mux/shift registers; emulators concentrate density for lab/stress tests.
+
+---
+
+## 3) Software Architecture
+
+### 3.1 Role Selection & Files
+
+- **Role**: `NVS_ROLE_ICM | PMS | SENS | RELAY | SEMU | REMU`.
+- **Common config**: `Config_Common.h` (partitions, baud, log paths).
+- **Strict keys**: `NVSConfig.h` (only **6-char** keys, common + role sections).
+- **Per-role extras**: `Config_ICM.h`, `Config_PMS.h`, `Config_SENS.h`, `Config_REL.h`, `Config_SEMU.h`, `Config_REMU.h` (keys not already in `NVSConfig.h`).
+
+### 3.2 NVS Namespaces (≤6 chars)
+
+`SYS` (identity), `NET` (ICM link), `ESP` (admission token), `IND` (indicator policy), `TOPO` (neighbors, lists), `BND` (relay boundaries), `REG` (ICM registry), `WIFI`, `BLE`, `AUTH`.
+
+### 3.3 NVS Key Model (highlights, all keys exactly 6 chars)
+
+**Common (all roles)**
+
+- Identity/version: `KIND__`, `DEVID_`, `HWREV_`, `SWVER_`, `BUILD_`, `DEFNAM`
+- ICM link/admission: `CHAN__`, `ICMMAC`, `PAIRED`, `TOKEN_`
+- Indicators: `LEDDIS`, `BUZDIS`
+
+**ICM**
+
+- Wi-Fi/BLE/PIN: `APSSID`/`APKEY_`/`STSSID`/`STKEY_`, `BLENAM`/`BLEPK_`, `PIN___`
+- Topology/registry: `TOPO__`, `SLMACS`, `S%02uMC`/`S%02uTK`, `R%02uMC`/`R%02uTK`, `P01MAC`/`P01TOK`
+- UI & limits (in role config): theme, seq/TTL/max, autosave, export fmt.
+
+**PMS**
+
+- Scaling/thresholds: `V48SN`/`V48SD`, `VBTSN`/`VBTSD`, `VBOVP`/`VBUVP`, `BIOCP`, `VBOVB`/`VBUVB`, `BAOCP`, `OTPC_`
+- Cadence/smoothing: `TELMSP`, `REPMS_`, `HBPMS_`, `SMOOTH`
+- Policy: `PWMINV`, `PBMINV`
+- Fan/buzzer: `FANONC`, `FANOFF`, `BUZEN`, `BUZVOL`
+
+**SENS (Production)**
+
+- Boundary sensors: `PRVMAC`/`PRVTOK`, `NXTMAC`/`NXTTOK`
+- Dependent relays (ordered): `POSRLS` (forward), `NEGRLS` (reverse)
+- Motion/ALS/actuation: `TFNMM`, `TFFMM`, `ABSPMM`, `ALS_T0`, `ALS_T1`, `CONFMS`, `STOPMS`, `RLYONM`, `RLYOFF`, `LEADCT`, `LEADMS`
+
+**REL (Production)**
+
+- Boundary sensors (only): `SAMAC_`/`SATOK_`, `SBMAC_`/`SBTOK_`, optional `SPLIT_`
+- Actuation guard: `PULSMS`, `HOLDMS`, `INTRLC`, `RTLIMC`
+
+**SEMU (Sensor Emulator)**
+
+- Virtual count: `SCOUNT` (default 8)
+- Device-level neighbors/lists (mirrors SENS): `PRVMAC`/`PRVTOK`, `NXTMAC`/`NXTTOK`, `POSRLS`, `NEGRLS`
+- Per-virtual identity & neighbors (6-char formats):
+
+  - Token: `V%02uTOK` → `V01TOK…`
+  - Prev: `P%02uMAC`/`P%02uTOK` → `P01MAC/P01TOK…`
+  - Next: `N%02uMAC`/`N%02uTOK` → `N01MAC/N01TOK…`
+
+- Emulation: `VONMS_`, `VLDCT_`, `VLDMS_`, `VENVEN`
+
+**REMU (Relay Emulator)**
+
+- Virtual count: `RCOUNT` (default 16)
+- Device-level fallbacks: `SAMAC_`/`SATOK_`, `SBMAC_`/`SBTOK_`, `SPLIT_`
+- Per-virtual identity & boundaries (6-char formats):
+
+  - Token: `O%02uTOK` → `O01TOK…`
+  - Side A: `A%02uMAC`/`A%02uTOK` → `A01MAC/A01TOK…`
+  - Side B: `B%02uMAC`/`B%02uTOK` → `B01MAC/B01TOK…`
+
+- Emulation: `RPULMS`, `RILCKJ` (JSON), `RREPMS`
+
+---
+
+## 4) Persistence Model — What each device remembers
+
+### 4.1 Pairing (common, non-ICM)
+
+On successful pairing with ICM, **every non-ICM node** persists:
+
+- **ICM MAC**: `ICMMAC`
+- **Admission token** it received: `TOKEN_`
+- **Paired state**: `PAIRED=1`
+- **ESP-NOW channel**: `CHAN__`
+
+> These four keys are the minimum to rejoin the network autonomously after power-cycle.
+
+### 4.2 Topology (who is around me, who I can talk to)
+
+#### Sensor (SENS)
+
+- **Boundary sensors** (for chain handoff):
+
+  - Previous neighbor: `PRVMAC`, `PRVTOK`
+  - Next neighbor: `NXTMAC`, `NXTTOK`
+
+- **Relays to drive (ordered)**:
+
+  - Forward/“ahead”: `POSRLS` (array; index order = activation order)
+  - Reverse/“behind”: `NEGRLS` (array; index order = activation order)
+
+> A SENS remembers _both_ the boundary sensors **and** the **two ordered relay lists** (before/after).
+
+#### Relay (REL)
+
+- **Exactly two boundary sensors** (the only sensors allowed to command it):
+
+  - Side A (left/prev): `SAMAC_`, `SATOK_`
+  - Side B (right/next): `SBMAC_`, `SBTOK_`
+
+- Optional split: `SPLIT_` (if used to partition outputs internally)
+
+> A REL remembers **only** its two boundary sensors (plus the optional split). It does **not** store lists of relays or other relays.
+
+#### Sensor Emulator (SEMU)
+
+- **Device-level** (shared physical MAC): pairing keys as above + `SCOUNT`.
+- **Per-virtual sensor i** (acts like an independent SENS in the chain):
+
+  - Virtual token: `V%02uTOK` → `V01TOK…`
+  - Prev neighbor: `P%02uMAC`, `P%02uTOK`
+  - Next neighbor: `N%02uMAC`, `N%02uTOK`
+
+- **Optional device-level lists** mirroring SENS: `POSRLS`, `NEGRLS`
+  (ICM may also choose to write per-virtual relay lists by convention as JSON inside `POSRLS`/`NEGRLS`, namespaced per virt-id.)
+
+> Each virtual sensor gets its **own** prev/next MAC/TOK and **its own** token, even though all share one physical MAC.
+
+#### Relay Emulator (REMU)
+
+- **Device-level**: pairing keys + `RCOUNT`.
+- **Per-virtual relay j** (acts like an independent REL in the chain):
+
+  - Virtual token: `O%02uTOK` → `O01TOK…`
+  - Boundary sensors: `A%02uMAC`/`A%02uTOK`, `B%02uMAC`/`B%02uTOK`
+
+- Device-level fallbacks: `SAMAC_`/`SATOK_`, `SBMAC_`/`SBTOK_`, `SPLIT_` (used only if per-virtual not set)
+
+> Each virtual relay stores **its own** two boundary sensors and token, so the ICM can place every output at a unique position.
+
+#### ICM (Controller)
+
+- **Registry** of paired nodes and their tokens: `SLMACS`, `S%02uMC`/`S%02uTK`, `R%02uMC`/`R%02uTK`, `P01MAC`/`P01TOK`.
+- **Topology** (authoritative): `TOPO__` (JSON with chains, neighbors, per-virtual mappings).
+
+---
+
+## 5) Network & Protocol
+
+### 5.1 ESP-NOW Envelope (binary)
+
+As in Rev. A: header with `proto_ver`, `msg_type`, `seq`, `node_id`, `role`, **`virt_id`** (0xFF if none), flags, `ts_ms`; payload; CRC16.
+
+**Core Types**: `HELLO`, `HELLO_ACK`, `TOPO_PUSH`, `CTRL_RELAY`, `CTRL_SYS`, `SENS_REPORT`, `RLY_STATE`, `PMS_STATUS`, `TIME_SYNC`, `LOG_REQ`, `CONFIG`, `FAULT_REPORT`, `ACK`.
+
+- `CTRL_RELAY` includes `virt_id` and the current **topology token**; relays/virtual relays reject mismatches.
+- `TOPO_PUSH` carries neighbor maps and lists to be written into the NVS keys above.
+
+### 5.2 Reliability & Security
+
+- ACK + retry (8/20/50 ms), RSSI guard; idempotent de-dupe window 1 s.
+- **Topology token** (16 B) rotated per push; command frames must include it.
+- PMK/LMK for ESP-NOW peers; optional HMAC-32 for payload integrity.
+
+---
+
+## 6) Operating Modes
+
+- **Auto**: SENS/SEMU detect direction (TF-Luna A/B, thresholds with hysteresis), then activate **ordered relays** from `POSRLS` or `NEGRLS` (lead count & step delay).
+- **Manual**: ICM web can directly pulse any REL/REMU (includes `virt_id`).
+
+---
+
+## 7) Web Interface (ICM)
+
+- Chain Builder (drag-and-drop), Paired Devices, Peers, Live View, Pair/Remove.
+- Export/Import `TOPO__`; push topology (rotates token).
+- **Emulators**: one physical MAC shows multiple draggable instances (SEMU: `SCOUNT`, REMU: `RCOUNT`). Each virtual instance gets its own neighbor/TOK entries as defined above.
+
+---
+
+## 8) Firmware Layout & Tasks
+
+- `/common`: espnow, msg defs, time sync, fan/LED/buzzer, logger, storage.
+- `/roles`: `role_icm/pms/sensor/relay/semu/remu`.
+- `/drivers`: TF-Luna (I²C + mux), BME280, VEML7700, DS18B20, ACS781, DS3231, 74HC595.
+
+**Tasks**: `radioTask`, `sensorTask`, `actuatorTask`, `pmsTask`, `sysTask`, `logTask`, `timeTask` (priorities as in Rev. A).
+
+---
+
+## 9) Bring-Up & Tests
+
+1. Pair nodes; verify `ICMMAC`, `TOKEN_`, `PAIRED=1`, `CHAN__` persisted.
+2. Push minimal chain **SENS→REL**; verify SENS stores `PRVMAC/PRVTOK`, `NXTMAC/NXTTOK`, `POSRLS/NEGRLS`; REL stores `SAMAC_/SATOK_`, `SBMAC_/SBTOK_`.
+3. Add **SEMU** (`SCOUNT=N`), **REMU** (`RCOUNT=M`); verify per-virtual keys: `VxxTOK`, `PxxMAC/TOK`, `NxxMAC/TOK` and `OxxTOK`, `AxxMAC/TOK`, `BxxMAC/TOK`.
+4. Manual pulses with `virt_id`; auto direction and ordered activation; token rotation rejection check; power-cycle persistence.
+
+---
+
+## 10) Operational Notes
+
+- **6-char keys only**; new settings must conform.
+- **No hardware pin names in config**; pins live in `Hardware_*.h`.
+- **All non-ICM devices** must have `ICMMAC`, `TOKEN_`, `PAIRED`, `CHAN__`.
+- **SENS remembers**: boundary sensors + **ordered** relays before/after.
+- **REL remembers**: only its **two boundary sensors** (and optional split).
+- **SEMU/REMU**: every virtual endpoint gets its **own token** and **own neighbors**.
+
+This revision states explicitly _what each role remembers_ from pairing and topology (including virtual endpoints), matching your NVS implementation and ensuring deterministic behavior after power cycles.
