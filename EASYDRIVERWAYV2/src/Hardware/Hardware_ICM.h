@@ -31,7 +31,7 @@
 /** @brief Fan PWM MOSFET gate pin */
 #define FAN_PWM_PIN            14
 /** @brief Onboard status LED pin */
-#define LED_ONBOARD_PIN        2
+#define LED_ONBOARD_PIN        RGB_R_PIN
 
 /** @brief I2C SCL for DS3231MZ (system RTC) */
 #define I2C_SYS_SCL_PIN        35

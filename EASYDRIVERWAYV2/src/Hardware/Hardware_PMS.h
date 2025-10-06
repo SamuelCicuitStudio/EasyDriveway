@@ -31,7 +31,7 @@
 /** @brief Fan PWM MOSFET gate pin */
 #define FAN_PWM_PIN            14
 /** @brief Onboard status LED pin */
-#define LED_ONBOARD_PIN        2
+#define LED_ONBOARD_PIN        RGB_R_PIN
 
 /** @brief DS18B20 (board temperature) OneWire pin */
 #define ONEWIRE_DS18B20_PIN    26

@@ -32,7 +32,7 @@
 /** @brief Fan PWM MOSFET gate pin */
 #define FAN_PWM_PIN            14
 /** @brief Onboard status LED pin */
-#define LED_ONBOARD_PIN        2
+#define LED_ONBOARD_PIN        RGB_R_PIN
 
 /** @brief System I2C SCL (TF-Luna pair, no mux) */
 #define I2C_SYS_SCL_PIN        33

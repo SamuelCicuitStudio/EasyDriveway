@@ -17,7 +17,7 @@
 #include <Arduino.h>
 #include "NVS/NvsManager.h"
 #include "Config/RGBConfig.h"
-#include "Peripheral/LogFS.h"
+#include "LogFS.h"
 #include "NVS/NVSConfig.h" 
 class LogFS;
 

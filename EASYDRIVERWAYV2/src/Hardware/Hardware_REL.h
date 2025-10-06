@@ -31,7 +31,7 @@
 /** @brief Fan PWM MOSFET gate pin */
 #define FAN_PWM_PIN            14
 /** @brief Onboard status LED pin */
-#define LED_ONBOARD_PIN        2
+#define LED_ONBOARD_PIN        RGB_R_PIN
 
 /** @brief Relay channel 1 driver output pin */
 #define RELAY1_OUT_PIN         10
