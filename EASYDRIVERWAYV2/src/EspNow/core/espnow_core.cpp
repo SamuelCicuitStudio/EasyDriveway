@@ -25,9 +25,15 @@
 
 namespace espnow {
 
-// transport + scheduler + router internal API (same namespace, no extern "C")
-bool  radio_init(uint8_t channel);  // defined in transport/espnow_radio.cpp
+// ---- security signer (implemented in security_hmac.cpp) ---------------------
+bool signHmac(const NowHeader& h,
+              const NowAuth128& a,
+              const NowTopoToken128* topo_or_null,
+              const uint8_t* payload, uint16_t payload_len,
+              NowSecTrailer& sec_out);
 
+// transport + scheduler + router internal API
+bool  radio_init(uint8_t channel);  // transport/espnow_radio.cpp
 bool  sched_enqueue(const uint8_t mac[6], uint8_t msg_type, const uint8_t* bytes, uint16_t len, uint8_t retries);
 void  sched_tick();
 bool  router_bind_rx(EspNowCallbacks* cb);
@@ -62,25 +68,26 @@ static void fill_header_auth(NowHeader& h, NowAuth128& a, uint8_t msg_type, uint
   std::memcpy(a.device_token128, g_cfg.device_token, 16);
 }
 
-static void fill_sec(NowSecTrailer& s) {
+static void fill_sec_nonce_only(NowSecTrailer& s) {
   // 48-bit nonce (monotonic)
   uint64_t n = g_nonce48++;
   for (int i = 0; i < NOW_HMAC_NONCE_LEN; ++i) s.nonce[i] = (uint8_t)((n >> (8*i)) & 0xFF);
-  // tag filled after HMAC compute
+  // tag filled by signHmac()
 }
 
 // Serialize a whole ESPNOW frame into buf:
 //   NowHeader | NowAuth128 | [TopoToken?] | payload | NowSecTrailer
-// Returns total length.
+// Returns total length; returns 0 on signing failure.
 static uint16_t encode_frame(uint8_t* out, uint8_t msg_type, uint16_t flags,
                              const void* payload, uint16_t payload_len,
                              bool include_topo, const NowTopoToken128* topo_opt)
 {
-  NowHeader h; NowAuth128 a; NowSecTrailer s;
+  NowHeader h; NowAuth128 a; NowSecTrailer s{};
   fill_header_auth(h, a, msg_type, flags, g_cfg.topo_ver, /*virt*/0xFF);
   buildSecTrailer(s);
-  fill_sec(s);
+  fill_sec_nonce_only(s);
 
+  // Layout: write H, A, [Topo?], Payload
   uint8_t* p = out;
   std::memcpy(p, &h, sizeof(h)); p += sizeof(h);
   std::memcpy(p, &a, sizeof(a)); p += sizeof(a);
@@ -93,12 +100,19 @@ static uint16_t encode_frame(uint8_t* out, uint8_t msg_type, uint16_t flags,
     std::memcpy(p, payload, payload_len); p += payload_len;
   }
 
-  // TODO: compute HMAC tag over header|auth|[topo?+payload]|nonce and write into s.tag
-  std::memset(s.tag, 0x00, NOW_HMAC_TAG_LEN); // temporary bring-up tag
+  // Compute HMAC tag over: H || A || [Topo?] || Payload || Nonce
+  const uint8_t* concat_start = out + sizeof(h) + sizeof(a); // start of [Topo?] or Payload
+  const uint16_t concat_len   = static_cast<uint16_t>(p - concat_start);
 
-  // Append trailer
+  // signHmac fills s.tag using header, auth, optional topo, payload span, and s.nonce
+  const NowTopoToken128* topo_ptr = include_topo ? topo_opt : nullptr;
+  if (!signHmac(h, a, topo_ptr, concat_start, concat_len, s)) {
+    return 0; // signing failed → abort frame
+  }
+
+  // Append trailer (nonce + tag)
   std::memcpy(p, &s, sizeof(s)); p += sizeof(s);
-  return (uint16_t)(p - out);
+  return static_cast<uint16_t>(p - out);
 }
 
 // -------------- EspNowStack methods --------------
@@ -128,13 +142,15 @@ static bool send_common(uint8_t msg_type, const void* payload, uint16_t payload_
   uint8_t frame[256];
   NowTopoToken128 t{};
   if (needs_topo) {
-    // Minimal non-zero token so current topoValidateToken() passes
-    for (int i = 0; i < 16; ++i) t.token128[i] = (uint8_t)(i + 1);  // <-- FIXED FIELD NAME
+    // Temporary stand-in until real topo token derivation is wired:
+    for (int i = 0; i < 16; ++i) t.token128[i] = static_cast<uint8_t>(i + 1);
   }
+
   const uint16_t len = encode_frame(frame, msg_type,
-                                    (uint16_t)(needs_topo ? NOW_FLAGS_HAS_TOPO : 0),
+                                    static_cast<uint16_t>(needs_topo ? NOW_FLAGS_HAS_TOPO : 0),
                                     payload, payload_len,
                                     needs_topo, needs_topo ? &t : nullptr);
+  if (!len) return false; // signing failed
 
   // Destination: ICM by default (works for non-ICM roles)
   return sched_enqueue(g_cfg.icm_mac, msg_type, frame, len, /*retries*/3);
@@ -142,7 +158,7 @@ static bool send_common(uint8_t msg_type, const void* payload, uint16_t payload_
 
 void EspNowStack::sendPing() {
   NowPing p{};
-  send_common(NOW_MT_PING, &p, sizeof(p), /*needs_topo*/false);
+  (void)send_common(NOW_MT_PING, &p, sizeof(p), /*needs_topo*/false);
 }
 
 void EspNowStack::sendConfigWrite(const NowConfigWrite& hdr, ByteSpan value) {
@@ -150,32 +166,32 @@ void EspNowStack::sendConfigWrite(const NowConfigWrite& hdr, ByteSpan value) {
   if (sizeof(hdr) + value.len > sizeof(buf)) return;
   std::memcpy(buf, &hdr, sizeof(hdr));
   if (value.data && value.len) std::memcpy(buf + sizeof(hdr), value.data, value.len);
-  send_common(NOW_MT_CONFIG_WRITE, buf, (uint16_t)(sizeof(hdr) + value.len), /*needs_topo*/false);
+  (void)send_common(NOW_MT_CONFIG_WRITE, buf, static_cast<uint16_t>(sizeof(hdr) + value.len), /*needs_topo*/false);
 }
 
 void EspNowStack::sendCtrlRelay(const NowCtrlRelay& ctrl) {
-  send_common(NOW_MT_CTRL_RELAY, &ctrl, sizeof(ctrl), /*needs_topo*/true);
+  (void)send_common(NOW_MT_CTRL_RELAY, &ctrl, sizeof(ctrl), /*needs_topo*/true);
 }
 
 void EspNowStack::sendTopoPush(ByteSpan tlv) {
-  send_common(NOW_MT_TOPO_PUSH, tlv.data, tlv.len, /*needs_topo*/false);
+  (void)send_common(NOW_MT_TOPO_PUSH, tlv.data, tlv.len, /*needs_topo*/false);
 }
 
-void EspNowStack::sendFwBegin(const NowFwBegin& fb)   { send_common(NOW_MT_FW_BEGIN,  &fb, sizeof(fb), false); }
+void EspNowStack::sendFwBegin(const NowFwBegin& fb)   { (void)send_common(NOW_MT_FW_BEGIN,  &fb, sizeof(fb), false); }
 void EspNowStack::sendFwChunk(const NowFwChunk& fc, ByteSpan data) {
   uint8_t buf[220];
   if (sizeof(fc) + data.len > sizeof(buf)) return;
   std::memcpy(buf, &fc, sizeof(fc));
   if (data.data && data.len) std::memcpy(buf + sizeof(fc), data.data, data.len);
-  send_common(NOW_MT_FW_CHUNK, buf, (uint16_t)(sizeof(fc) + data.len), false);
+  (void)send_common(NOW_MT_FW_CHUNK, buf, static_cast<uint16_t>(sizeof(fc) + data.len), false);
 }
 void EspNowStack::sendFwCommit(const NowFwCommit& cm, ByteSpan sig) {
   uint8_t buf[96];
   if (sizeof(cm) + sig.len > sizeof(buf)) return;
   std::memcpy(buf, &cm, sizeof(cm));
   if (sig.data && sig.len) std::memcpy(buf + sizeof(cm), sig.data, sig.len);
-  send_common(NOW_MT_FW_COMMIT, buf, (uint16_t)(sizeof(cm) + sig.len), false);
+  (void)send_common(NOW_MT_FW_COMMIT, buf, static_cast<uint16_t>(sizeof(cm) + sig.len), false);
 }
-void EspNowStack::sendFwAbort(const NowFwAbort& ab)   { send_common(NOW_MT_FW_ABORT,  &ab, sizeof(ab), false); }
+void EspNowStack::sendFwAbort(const NowFwAbort& ab)   { (void)send_common(NOW_MT_FW_ABORT,  &ab, sizeof(ab), false); }
 
 } // namespace espnow

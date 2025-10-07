@@ -1,245 +1,299 @@
 // security/security_hmac.cpp
+// Self-contained SHA-256 + HMAC-SHA256 (portable, no external libs)
+// Implements:
+//   - verifyHmac(...)
+//   - signHmac(...)
+//   - hmac_sha256(...) used internally and available to other modules
 //
-// HMAC + replay helpers for the ESPNOW v2H stack.
-// Tag = Trunc_96( HMAC-SHA256(K_app, NowHeader||NowAuth128||[Topo?+Payload]||Nonce) )
+// HMAC input order (spec):
+//   NowHeader || NowAuth128 || [NowTopoToken128?] || payload || nonce
+//
+// Key derivation (bring-up KDF; replace later if desired):
+//   app_key = HMAC-SHA256( pmk || lmk , token128 || salt )   // 32 bytes
+//
+// Notes:
+// - Truncates HMAC to 12 bytes for the wire tag (NOW_HMAC_TAG_LEN).
+// - Includes a tiny SHA-256 implementation (FIPS 180-4 style).
+// - If you later want to use mbedTLS, you can #ifdef out the local code and call mbedtls_md_hmac.
 
-#if __has_include("EspNowStack.h")
-  #include "EspNowStack.h"
-#else
-  #include "EspNow/EspNowStack.h"
-#endif
-
-#if __has_include("EspNowAPI.h")
-  #include "EspNowAPI.h"
-#else
-  #include "EspNow/EspNowAPI.h"
-#endif
+#include "EspNow/EspNowStack.h"
+#include "EspNow/EspNowAPI.h"
 
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 
-#if defined(ESP_PLATFORM) || (defined(ARDUINO) && defined(ESP32))
-  #include <mbedtls/md.h>
-  #include <mbedtls/sha256.h>
-  #define ESPNOW_HAVE_MBEDTLS 1
-#else
-  #if __has_include(<mbedtls/md.h>)
-    #include <mbedtls/md.h>
-    #include <mbedtls/sha256.h>
-    #define ESPNOW_HAVE_MBEDTLS 1
-  #else
-    #define ESPNOW_HAVE_MBEDTLS 0
-  #endif
-#endif
-
 namespace espnow {
 
-// ---------------------------
-// Internal state / constants
-// ---------------------------
+// ======== Size guards (wire compatibility) ===================================
+static_assert(sizeof(NowHeader)       == 23, "NowHeader must be 23 bytes");
+static_assert(sizeof(NowAuth128)      == 16, "NowAuth128 must be 16 bytes");
+static_assert(sizeof(NowTopoToken128) == 16, "NowTopoToken128 must be 16 bytes");
+static_assert(sizeof(NowSecTrailer)   == (NOW_HMAC_NONCE_LEN + NOW_HMAC_TAG_LEN),
+              "NowSecTrailer must be 18 bytes");
 
-static EspNowSecrets g_secrets{};
-static uint8_t g_app_key[32] = {0};
-static bool    g_app_key_ready = false;
+// ======== Minimal SHA-256 implementation =====================================
+// Tiny, portable, public-domain style SHA-256 (straightforward FIPS 180-4).
+// Good enough for firmware use; replace with HW accel/mbedTLS later if desired.
 
-// Only used by the stub (when PMK/LMK aren’t provisioned yet).
-static const uint8_t k_stub_salt[16] = {
-  0x45,0x44,0x5F,0x76,0x32,0x48,0x5F,0x53,0x41,0x4C,0x54,0x00,0x00,0x00,0x00,0x01
+struct sha256_ctx {
+  uint32_t state[8];
+  uint64_t bitlen;
+  uint8_t  buffer[64];
+  size_t   buffer_len;
 };
 
-void security_set_secrets(const EspNowSecrets& s) {
-  g_secrets = s;
-  g_app_key_ready = false;
+static inline uint32_t rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
+static inline uint32_t ch(uint32_t x, uint32_t y, uint32_t z){ return (x & y) ^ (~x & z); }
+static inline uint32_t maj(uint32_t x, uint32_t y, uint32_t z){ return (x & y) ^ (x & z) ^ (y & z); }
+static inline uint32_t bsig0(uint32_t x){ return rotr(x,2) ^ rotr(x,13) ^ rotr(x,22); }
+static inline uint32_t bsig1(uint32_t x){ return rotr(x,6) ^ rotr(x,11) ^ rotr(x,25); }
+static inline uint32_t ssig0(uint32_t x){ return rotr(x,7) ^ rotr(x,18) ^ (x >> 3); }
+static inline uint32_t ssig1(uint32_t x){ return rotr(x,17) ^ rotr(x,19) ^ (x >> 10); }
+
+static const uint32_t K256[64] = {
+  0x428a2f98ul,0x71374491ul,0xb5c0fbcful,0xe9b5dba5ul,0x3956c25bul,0x59f111f1ul,0x923f82a4ul,0xab1c5ed5ul,
+  0xd807aa98ul,0x12835b01ul,0x243185beul,0x550c7dc3ul,0x72be5d74ul,0x80deb1feul,0x9bdc06a7ul,0xc19bf174ul,
+  0xe49b69c1ul,0xefbe4786ul,0x0fc19dc6ul,0x240ca1ccul,0x2de92c6ful,0x4a7484aaul,0x5cb0a9dcul,0x76f988daul,
+  0x983e5152ul,0xa831c66dul,0xb00327c8ul,0xbf597fc7ul,0xc6e00bf3ul,0xd5a79147ul,0x06ca6351ul,0x14292967ul,
+  0x27b70a85ul,0x2e1b2138ul,0x4d2c6dfcul,0x53380d13ul,0x650a7354ul,0x766a0abbul,0x81c2c92eul,0x92722c85ul,
+  0xa2bfe8a1ul,0xa81a664bul,0xc24b8b70ul,0xc76c51a3ul,0xd192e819ul,0xd6990624ul,0xf40e3585ul,0x106aa070ul,
+  0x19a4c116ul,0x1e376c08ul,0x2748774cul,0x34b0bcb5ul,0x391c0cb3ul,0x4ed8aa4aul,0x5b9cca4ful,0x682e6ff3ul,
+  0x748f82eeul,0x78a5636ful,0x84c87814ul,0x8cc70208ul,0x90befffaul,0xa4506cebul,0xbef9a3f7ul,0xc67178f2ul
+};
+
+
+static void sha256_init(sha256_ctx& c) {
+  c.state[0]=0x6a09e667ul; c.state[1]=0xbb67ae85ul; c.state[2]=0x3c6ef372ul; c.state[3]=0xa54ff53aul;
+  c.state[4]=0x510e527ful; c.state[5]=0x9b05688cul; c.state[6]=0x1f83d9abul; c.state[7]=0x5be0cd19ul;
+  c.bitlen = 0;
+  c.buffer_len = 0;
 }
 
-// Replay window per peer (tiny table; replace with a map if you need more)
-struct PeerNonceState {
-  uint8_t mac[6];
-  uint64_t last48;
-  bool in_use;
-};
-static PeerNonceState g_nonce_tbl[8];
-
-static inline uint64_t clamp48(uint64_t v) { return (v & 0xFFFFFFFFFFFFULL); }
-
-static PeerNonceState* find_or_add_peer(const uint8_t mac[6]) {
-  for (auto& s : g_nonce_tbl) {
-    if (s.in_use && std::memcmp(s.mac, mac, 6) == 0) return &s;
+static void sha256_compress(sha256_ctx& c, const uint8_t block[64]) {
+  uint32_t w[64];
+  for (int i=0;i<16;++i) {
+    w[i] = (uint32_t)block[i*4+0]<<24 | (uint32_t)block[i*4+1]<<16 | (uint32_t)block[i*4+2]<<8 | (uint32_t)block[i*4+3];
   }
-  for (auto& s : g_nonce_tbl) {
-    if (!s.in_use) {
-      std::memcpy(s.mac, mac, 6);
-      s.last48 = 0;
-      s.in_use = true;
-      return &s;
+  for (int i=16;i<64;++i) w[i] = ssig1(w[i-2]) + w[i-7] + ssig0(w[i-15]) + w[i-16];
+
+  uint32_t a=c.state[0],b=c.state[1],c0=c.state[2],d=c.state[3],e=c.state[4],f=c.state[5],g=c.state[6],h=c.state[7];
+
+  for (int i=0;i<64;++i) {
+    uint32_t t1 = h + bsig1(e) + ch(e,f,g) + K256[i] + w[i];
+    uint32_t t2 = bsig0(a) + maj(a,b,c0);
+    h=g; g=f; f=e; e=d + t1; d=c0; c0=b; b=a; a=t1 + t2;
+  }
+
+  c.state[0] += a; c.state[1] += b; c.state[2] += c0; c.state[3] += d;
+  c.state[4] += e; c.state[5] += f; c.state[6] += g; c.state[7] += h;
+}
+
+static void sha256_update(sha256_ctx& c, const uint8_t* data, size_t len) {
+  while (len > 0) {
+    size_t to_copy = 64 - c.buffer_len;
+    if (to_copy > len) to_copy = len;
+    std::memcpy(c.buffer + c.buffer_len, data, to_copy);
+    c.buffer_len += to_copy;
+    data += to_copy;
+    len  -= to_copy;
+
+    if (c.buffer_len == 64) {
+      sha256_compress(c, c.buffer);
+      c.bitlen += 512; // 64 bytes * 8
+      c.buffer_len = 0;
     }
   }
-  std::memcpy(g_nonce_tbl[0].mac, mac, 6);
-  g_nonce_tbl[0].last48 = 0;
-  g_nonce_tbl[0].in_use = true;
-  return &g_nonce_tbl[0];
 }
 
-static bool replay_ok_and_update(const uint8_t mac[6], const uint8_t nonce6[NOW_HMAC_NONCE_LEN], uint16_t window) {
-  uint64_t n = 0;
-  for (int i = 0; i < NOW_HMAC_NONCE_LEN; ++i) n |= (static_cast<uint64_t>(nonce6[i]) << (8 * i));
-  n = clamp48(n);
+static void sha256_final(sha256_ctx& c, uint8_t out[32]) {
+  // append 0x80, then pad with zeros, then length (big-endian)
+  uint64_t total_bits = c.bitlen + (uint64_t)c.buffer_len * 8ull;
 
-  PeerNonceState* st = find_or_add_peer(mac);
-  const uint64_t last = clamp48(st->last48);
+  // append 0x80
+  c.buffer[c.buffer_len++] = 0x80;
 
-  if (n > last) { st->last48 = n; return true; }
-  if (window > 0) {
-    const uint64_t low = (last >= window) ? (last - window) : 0;
-    if (n >= low && n <= last) return true;
+  // pad with zeros until we have room for 8-byte length
+  if (c.buffer_len > 56) {
+    while (c.buffer_len < 64) c.buffer[c.buffer_len++] = 0x00;
+    sha256_compress(c, c.buffer);
+    c.buffer_len = 0;
   }
-  return false;
+  while (c.buffer_len < 56) c.buffer[c.buffer_len++] = 0x00;
+
+  // length (big-endian)
+  for (int i=7;i>=0;--i) c.buffer[c.buffer_len++] = (uint8_t)((total_bits >> (i*8)) & 0xFF);
+  sha256_compress(c, c.buffer);
+
+  // output (big-endian words)
+  for (int i=0;i<8;++i) {
+    out[i*4+0] = (uint8_t)((c.state[i] >> 24) & 0xFF);
+    out[i*4+1] = (uint8_t)((c.state[i] >> 16) & 0xFF);
+    out[i*4+2] = (uint8_t)((c.state[i] >>  8) & 0xFF);
+    out[i*4+3] = (uint8_t)((c.state[i] >>  0) & 0xFF);
+  }
 }
 
-// Router can use these if you want stronger gates there
-static bool is_privileged(uint8_t msg_type) {
-  return (msg_type == NOW_MT_TOPO_PUSH)    ||
-         (msg_type == NOW_MT_NET_SET_CHAN) ||
-         (msg_type == NOW_MT_TIME_SYNC)    ||
-         (msg_type == NOW_MT_FW_BEGIN)     ||
-         (msg_type == NOW_MT_FW_CHUNK)     ||
-         (msg_type == NOW_MT_FW_COMMIT)    ||
-         (msg_type == NOW_MT_FW_ABORT);
-}
-static bool privileged_allowed(const NowHeader& h, const uint8_t icm_mac[6]) {
-  if (!is_privileged(h.msg_type)) return true;
-  if (h.sender_role != NOW_KIND_ICM) return false;
-  return (std::memcmp(h.sender_mac, icm_mac, 6) == 0);
-}
+// ======== HMAC-SHA256 (multi-part helper as used earlier) ====================
 
-// ---------------------------
-// HMAC glue
-// ---------------------------
+bool hmac_sha256(const uint8_t* key, size_t key_len,
+                 const uint8_t* in1, size_t in1_len,
+                 const uint8_t* in2, size_t in2_len,
+                 const uint8_t* in3, size_t in3_len,
+                 uint8_t out32[32])
+{
+  // block size for SHA-256
+  const size_t B = 64;
 
-#if ESPNOW_HAVE_MBEDTLS
-static bool hmac_sha256(const uint8_t* key, size_t key_len,
-                        const uint8_t* a, size_t alen,
-                        const uint8_t* b, size_t blen,
-                        const uint8_t* c, size_t clen,
-                        const uint8_t* d, size_t dlen,
-                        uint8_t out32[32]) {
-  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (!info) return false;
+  // Prepare K0 (block-sized key)
+  uint8_t K0[64];
+  if (key_len > B) {
+    // hash the long key first
+    sha256_ctx t; sha256_init(t);
+    sha256_update(t, key, key_len);
+    uint8_t dk[32]; sha256_final(t, dk);
+    std::memset(K0, 0, B);
+    std::memcpy(K0, dk, 32);
+  } else {
+    std::memset(K0, 0, B);
+    if (key && key_len) std::memcpy(K0, key, key_len);
+  }
 
-  mbedtls_md_context_t ctx;
-  mbedtls_md_init(&ctx);
+  uint8_t ipad[64], opad[64];
+  for (size_t i=0;i<B;++i) { ipad[i] = K0[i] ^ 0x36; opad[i] = K0[i] ^ 0x5C; }
 
-  if (mbedtls_md_setup(&ctx, info, 1) != 0) { mbedtls_md_free(&ctx); return false; }
-  if (mbedtls_md_hmac_starts(&ctx, key, key_len) != 0) { mbedtls_md_free(&ctx); return false; }
+  // inner = SHA256( (K0 ^ ipad) || in1 || in2 || in3 )
+  sha256_ctx in; sha256_init(in);
+  sha256_update(in, ipad, B);
+  if (in1 && in1_len) sha256_update(in, in1, in1_len);
+  if (in2 && in2_len) sha256_update(in, in2, in2_len);
+  if (in3 && in3_len) sha256_update(in, in3, in3_len);
+  uint8_t inner[32]; sha256_final(in, inner);
 
-  if (a && alen) mbedtls_md_hmac_update(&ctx, a, alen);
-  if (b && blen) mbedtls_md_hmac_update(&ctx, b, blen);
-  if (c && clen) mbedtls_md_hmac_update(&ctx, c, clen);
-  if (d && dlen) mbedtls_md_hmac_update(&ctx, d, dlen);
-
-  const int fin = mbedtls_md_hmac_finish(&ctx, out32);
-  mbedtls_md_free(&ctx);
-  return fin == 0;
-}
-#else
-static bool hmac_sha256(const uint8_t* /*key*/, size_t /*key_len*/,
-                        const uint8_t* /*a*/, size_t /*alen*/,
-                        const uint8_t* /*b*/, size_t /*blen*/,
-                        const uint8_t* /*c*/, size_t /*clen*/,
-                        const uint8_t* /*d*/, size_t /*dlen*/,
-                        uint8_t out32[32]) {
-  std::memset(out32, 0x00, 32);
+  // outer = SHA256( (K0 ^ opad) || inner )
+  sha256_ctx out; sha256_init(out);
+  sha256_update(out, opad, B);
+  sha256_update(out, inner, 32);
+  sha256_final(out, out32);
   return true;
 }
-#endif
 
-// ---- KDFs -------------------------------------------------------------------
-
-// Fallback KDF (only during bring-up without PMK/LMK provisioned)
-static void derive_app_key_stub(const NowHeader& h, const NowAuth128& a, uint8_t out32[32]) {
-#if ESPNOW_HAVE_MBEDTLS
-  uint8_t msg[16 + 6 + 1];
-  std::memcpy(msg, a.device_token128, 16);
-  std::memcpy(msg + 16, h.sender_mac, 6);
-  msg[22] = h.sender_role;
-
-  (void)hmac_sha256(k_stub_salt, sizeof(k_stub_salt),
-                    msg, sizeof(msg),
-                    nullptr, 0,
-                    nullptr, 0,
-                    nullptr, 0,
-                    out32);
-#else
-  std::memset(out32, 0xA5, 32);
-#endif
+// helper for a single contiguous msg
+static inline bool hmac_sha256_single(const uint8_t* key, size_t key_len,
+                                      const uint8_t* msg, size_t msg_len,
+                                      uint8_t out32[32]) {
+  return hmac_sha256(key, key_len, msg, msg_len, nullptr, 0, nullptr, 0, out32);
 }
 
-// Real K_app when PMK/LMK are provisioned:
-//   K_app = HMAC-SHA256( (PMK||"APPK"),
-//                        (LMK||device_token),
-//                        SALT,
-//                        nil )
-static void kdf_app_key(const NowAuth128& a, uint8_t out32[32]) {
-  uint8_t k[16 + 4]; // PMK || "APPK"
-  std::memcpy(k, g_secrets.pmk, 16);
-  k[16] = 'A'; k[17] = 'P'; k[18] = 'P'; k[19] = 'K';
+// ======== Secrets / Bring-up KDF =============================================
 
-  uint8_t msg[16 + 16]; // LMK || device_token
-  std::memcpy(msg,       g_secrets.lmk,        16);
-  std::memcpy(msg + 16,  a.device_token128,    16);
+struct Secrets {
+  uint8_t pmk[16];
+  uint8_t lmk[16];
+  uint8_t salt[16];
+};
 
-  (void)hmac_sha256(k, sizeof(k),
-                    msg, sizeof(msg),
-                    g_secrets.salt, sizeof(g_secrets.salt),
-                    nullptr, 0,
-                    nullptr, 0,        // <-- FIX: add the 4th (empty) data segment
-                    out32);
+// Defaults are placeholders (ASCII-ish), safe for bring-up only.
+static Secrets g_secrets = {{
+  0x50,0x4D,0x4B,0x2D,0x44,0x45,0x46,0x41,0x55,0x4C,0x54,0x2D,0x50,0x4D,0x4B,0x21
+},{
+  0x4C,0x4D,0x4B,0x2D,0x44,0x45,0x46,0x41,0x55,0x4C,0x54,0x2D,0x4C,0x4D,0x4B,0x21
+},{
+  0x53,0x41,0x4C,0x54,0x2D,0x44,0x45,0x46,0x41,0x55,0x4C,0x54,0x2D,0x53,0x41,0x4C
+}};
+
+void setSecuritySecrets(const uint8_t pmk[16], const uint8_t lmk[16], const uint8_t salt[16]) {
+  if (pmk)  std::memcpy(g_secrets.pmk,  pmk,  16);
+  if (lmk)  std::memcpy(g_secrets.lmk,  lmk,  16);
+  if (salt) std::memcpy(g_secrets.salt, salt, 16);
 }
 
-// ---------------------------------------------------------------------------
+static bool derive_app_key(const uint8_t token128[16], uint8_t out32[32]) {
+  uint8_t key[32];
+  std::memcpy(key,     g_secrets.pmk,  16);
+  std::memcpy(key+16,  g_secrets.lmk,  16);
 
-void deriveKeys() {
-  g_app_key_ready = false; // derive per-frame (needs device_token from NowAuth)
+  uint8_t msg[32];
+  std::memcpy(msg,     token128,       16);
+  std::memcpy(msg+16,  g_secrets.salt, 16);
+
+  return hmac_sha256_single(key, sizeof(key), msg, sizeof(msg), out32);
 }
 
-bool verifyHmac(const NowHeader& h,
-                const NowAuth128& a,
-                const NowSecTrailer& s,
-                const unsigned char* payload,
-                unsigned short payload_len) {
-  // Replay guard
-  if (!replay_ok_and_update(h.sender_mac, s.nonce, /*window=*/64)) {
-    return false;
+// ======== Concatenation helper ===============================================
+
+static size_t build_mac_message(const NowHeader& h,
+                                const NowAuth128& a,
+                                const NowTopoToken128* topo_or_null,
+                                const uint8_t* payload, uint16_t payload_len,
+                                const uint8_t nonce[NOW_HMAC_NONCE_LEN],
+                                uint8_t* out, size_t out_cap)
+{
+  const size_t need = sizeof(NowHeader) + sizeof(NowAuth128)
+                    + (topo_or_null ? sizeof(NowTopoToken128) : 0)
+                    + payload_len + NOW_HMAC_NONCE_LEN;
+  if (out_cap < need) return 0;
+
+  uint8_t* p = out;
+  std::memcpy(p, &h, sizeof(h)); p += sizeof(h);
+  std::memcpy(p, &a, sizeof(a)); p += sizeof(a);
+  if (topo_or_null) {
+    std::memcpy(p, topo_or_null, sizeof(NowTopoToken128));
+    p += sizeof(NowTopoToken128);
   }
+  if (payload && payload_len) {
+    std::memcpy(p, payload, payload_len);
+    p += payload_len;
+  }
+  std::memcpy(p, nonce, NOW_HMAC_NONCE_LEN); p += NOW_HMAC_NONCE_LEN;
+  return static_cast<size_t>(p - out);
+}
 
-  // Derive per-frame K_app (uses device_token from NowAuth)
+// ======== Public API: verify/sign ============================================
+
+bool verifyHmac(const NowHeader* ph,
+                const NowAuth128* pa,
+                const NowTopoToken128* topo_or_null,
+                const uint8_t* payload, uint16_t payload_len,
+                const NowSecTrailer* sec)
+{
+  if (!ph || !pa || !sec) return false;
+
   uint8_t app_key[32];
-  if (g_secrets.has_pmk && g_secrets.has_lmk) {
-    kdf_app_key(a, app_key);
-  } else {
-    derive_app_key_stub(h, a, app_key);
-  }
+  if (!derive_app_key(pa->device_token128, app_key)) return false;
 
-  // HMAC over: Header || Auth || [Topo?+Payload (as provided)] || Nonce
-  const uint8_t* ph = reinterpret_cast<const uint8_t*>(&h);
-  const uint8_t* pa = reinterpret_cast<const uint8_t*>(&a);
-  const uint8_t* pn = reinterpret_cast<const uint8_t*>(s.nonce);
+  uint8_t buf[512];
+  const size_t msg_len = build_mac_message(*ph, *pa, topo_or_null,
+                                           payload, payload_len,
+                                           sec->nonce, buf, sizeof(buf));
+  if (msg_len == 0) return false;
 
-  uint8_t digest[32];
-  if (!hmac_sha256(app_key, sizeof(app_key),
-                   ph, sizeof(NowHeader),
-                   pa, sizeof(NowAuth128),
-                   payload, static_cast<size_t>(payload_len),
-                   pn, NOW_HMAC_NONCE_LEN,
-                   digest)) {
-    return false;
-  }
+  uint8_t dig[32];
+  if (!hmac_sha256_single(app_key, sizeof(app_key), buf, msg_len, dig)) return false;
 
-  // Constant-time compare (truncate to 96 bits)
-  volatile uint8_t diff = 0;
-  for (int i = 0; i < NOW_HMAC_TAG_LEN; ++i) diff |= (digest[i] ^ s.tag[i]);
-  return (diff == 0);
+  return std::memcmp(dig, sec->tag, NOW_HMAC_TAG_LEN) == 0;
+}
+
+bool signHmac(const NowHeader& h,
+              const NowAuth128& a,
+              const NowTopoToken128* topo_or_null,
+              const uint8_t* payload, uint16_t payload_len,
+              NowSecTrailer& sec_out)
+{
+  uint8_t app_key[32];
+  if (!derive_app_key(a.device_token128, app_key)) return false;
+
+  uint8_t buf[512];
+  const size_t msg_len = build_mac_message(h, a, topo_or_null,
+                                           payload, payload_len,
+                                           sec_out.nonce, buf, sizeof(buf));
+  if (msg_len == 0) return false;
+
+  uint8_t dig[32];
+  if (!hmac_sha256_single(app_key, sizeof(app_key), buf, msg_len, dig)) return false;
+
+  std::memcpy(sec_out.tag, dig, NOW_HMAC_TAG_LEN);
+  return true;
 }
 
 } // namespace espnow

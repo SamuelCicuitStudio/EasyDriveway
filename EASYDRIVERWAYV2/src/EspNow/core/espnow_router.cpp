@@ -11,9 +11,8 @@ namespace espnow {
 
 // radio RX callback signature (from transport)
 using RxCallback = void(*)(const uint8_t* mac, const uint8_t* data, size_t len);
-extern "C" {
-  bool radio_set_rx(RxCallback cb);
-}
+// From transport (C++ linkage in the same namespace)
+bool radio_set_rx(RxCallback cb);
 
 // ---- small helpers ----
 static inline bool mac_eq(const uint8_t a[6], const uint8_t b[6]) { return std::memcmp(a,b,6)==0; }
