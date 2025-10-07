@@ -14,11 +14,8 @@
  **************************************************************/
 #ifndef NVS_CONFIG_H
 #define NVS_CONFIG_H
-#pragma once
 
-/***********************
- * INCLUDES
- ***********************/
+
 #include "Config/SetRole.h"
 
 /**
@@ -27,6 +24,20 @@
 #define NVS_DEF_MAC_EMPTY  "000000000000"   //!< 12 hex chars
 #define NVS_DEF_JSON_OBJ   "{}"             //!< Default empty JSON object
 #define NVS_DEF_JSON_ARR   "[]"             //!< Default empty JSON array
+/****************************************************
+ * AUTH (security secrets) — PMK/LMK/SALT
+ * NOTE: exact 6-char keys
+ ****************************************************/
+#define NVS_KEY_PMK    "PMK___"  //!< Fleet/global PMK (16 bytes)
+#define NVS_KEY_LMK    "LMK___"  //!< Per-device LMK (16 bytes)
+#define NVS_KEY_SALT   "SALT__"  //!< Deployment salt for app KDF (16 bytes)
+#define NVS_KEY_AKVER  "AKVER_"  //!< App-key/KDF version (u16), optional
+
+// Defaults (all zeros = "not provisioned")
+#define NVS_DEF_PMK    0
+#define NVS_DEF_LMK    0
+#define NVS_DEF_SALT   0
+#define NVS_DEF_AKVER  1
 
 /****************************************************
  * Namespaces (≤ 6 chars, UPPERCASE)

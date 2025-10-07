@@ -1,0 +1,62 @@
+[
+  {
+    "name": "PING (from SENS)",
+    "length_bytes": 28,
+    "hex": "0101000001000000ff00ab8967452301aabbccddee017ac1f2b09b54",
+    "notes": "Header v=1,type=0x01; seq=1; virt_id=0xFF; device_token32 present; no topology token."
+  },
+  {
+    "name": "PING_REPLY (from SENS)",
+    "length_bytes": 31,
+    "hex": "0102000002000000ff00ab8967452301aabbccddee017ac1f2b00335004f46",
+    "notes": "Adds role=NOW_KIND_SENS(0x03) and NOW_STATE flags=0x0035."
+  },
+  {
+    "name": "CTRL_RELAY (REL: ch1 pulse 600ms)",
+    "length_bytes": 36,
+    "hex": "011000000a000100ff00060504030201112233445566111111119f42ab1001025802bd27",
+    "notes": "From ICM to REL; includes topology_token32; virt_id=0xFF; channel=1, op=pulse(2), pulse_ms=600."
+  },
+  {
+    "name": "CTRL_RELAY (REMU virt5: ch0 ON)",
+    "length_bytes": 36,
+    "hex": "011000000b0001000500060504030201112233445566111111119f42ab100001000048f3",
+    "notes": "From ICM to REMU; includes topology_token32; virt_id=5; channel=0, op=ON(1)."
+  },
+  {
+    "name": "SENS_REPORT (SENS)",
+    "length_bytes": 53,
+    "hex": "0120000014000100ff00ab8967452301aabbccddee017ac1f2b0d204410192090129098e027e0901c800ba08d711cd8b01000319d3",
+    "notes": "A/B: dist/amp/temp_x100/ok; lux, tC_x100, rh_x100, press_pa; present_flags; virt_id=0xFF."
+  },
+  {
+    "name": "RLY_STATE (REL)",
+    "length_bytes": 31,
+    "hex": "012100001e000100ff00000100000000aabbccddee10deadbeef03000093f6",
+    "notes": "bitmask=0x0003; result=OK(0); virt_id=0xFF."
+  },
+  {
+    "name": "PMS_STATUS",
+    "length_bytes": 45,
+    "hex": "0130000028000000ff00000200000000aabbccddee99a1b2c3d4000380bbd430dc052003780807b20c0100cf76",
+    "notes": "source=WALL(0); rails=0x03; volt/current; fan pwm/rpm; temp; faults=0x0001."
+  },
+  {
+    "name": "CONFIG_WRITE (SENS TFAADR=0x10)",
+    "length_bytes": 41,
+    "hex": "0140000032000100ff00060504030201112233445566111111119f42ab100654464141445201107fe6",
+    "notes": "Key='TFAADR' (6), value=0x10; includes topology_token32; virt_id=0xFF."
+  },
+  {
+    "name": "CONFIG_WRITE (SEMU virt3 TFAAD_3=0x12)",
+    "length_bytes": 42,
+    "hex": "01400000330001000300060504030201112233445566111111119f42ab100754464141445f3301122293",
+    "notes": "Key='TFAAD_3' (7), value=0x12; includes topology_token32; virt_id=3."
+  },
+  {
+    "name": "CONFIG_WRITE (REL PULSMS=500ms)",
+    "length_bytes": 42,
+    "hex": "0140000034000100ff00060504030201112233445566111111119f42ab100650554c534d5302f401414c",
+    "notes": "Key='PULSMS' (6), value=0x01F4 (LE); includes topology_token32; virt_id=0xFF."
+  }
+]

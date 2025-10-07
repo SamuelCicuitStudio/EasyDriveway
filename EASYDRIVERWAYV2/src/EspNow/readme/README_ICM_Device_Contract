@@ -1,0 +1,138 @@
+# README — ICM ⇄ Devices: Controls & Live Expectations (SEMU-as-Individual Virtual Sensors)
+
+This document is the authoritative contract for what the **ICM** can control on each **non‑ICM** role (PMS, REL, SENS, SEMU, REMU) and what each device must stream back **live**. It explicitly treats **SEMU** virtual sensors as **individual sensors** in the Web UI and in the protocol (each virtual acts like a SENS with a `virt_id`), so you can safely mix **SENS** and **SEMU** in the same topology without conflicts or crashes. Every section below is normative.
+
+---
+
+## 0) Header & Common Frame Requirements
+
+**All frames MUST include:**
+
+- `sender_mac` — 6 bytes (MAC of the sender)
+- `sender_device_token32` — 32‑bit alphanumeric admission token (8‑char uppercase hex, e.g. `9F42AB10`)
+- `ts_ms` — sender timestamp (ICM is time‑authoritative whenever it is the sender)
+
+**Any frame that touches chain/actuation MUST ALSO include:**
+
+- `topology_token32` — 32‑bit alphanumeric (8‑char uppercase hex) authorizing actions under the current topology push
+
+**Built‑in reliability:** rely on ESP‑NOW send callback (acked/unacked). Use `PING/PING_REPLY` for liveness/RTT.
+
+> Canonical ordering of header fields and fixed sizes are assumed by the protocol builder. See the Tokens/Topology README for pairing/validation details.
+
+---
+
+## 1) PMS — Power Management Unit (production)
+
+### ICM → PMS (Control)
+
+- **Source & rails** — select **WALL/BAT**, enable/disable **48 V** and sub‑rails (PMS enforces interlocks).
+- **PMS‑owned relays** — per‑channel **ON/OFF/PULSE(ms)** and **atomic mask write**.
+- **Cooling** — set **fan PWM/override**.
+- **Indicators** — **RGB LED** policy enable/polarity/test; **Buzzer** enable cue.
+- **Telemetry cadence** — set status period / heartbeat / smoothing (persist in PMS config).
+
+> These controls are local; `topology_token32` is not required unless the PMS firmware gates a rail behind topology policy.
+
+### PMS → ICM (Live)
+
+- **PMS_STATUS** — selected source, rail states, V/I, temps (e.g., DS18B20), fan PWM/RPM, faults; optional relay shadow mask.
+- Cadence: configured period and on‑demand snapshots.
+
+---
+
+## 2) REL — Relay Module (production)
+
+### ICM → REL (Control)
+
+- **Per‑channel** — **ON/OFF/PULSE(ms)**.
+- **Atomic mask write** — synchronized step changes via relay bitmask.
+- **Guard/policy (persist)** — pulse/hold timings, interlock groups, rate limits.
+
+> **Required:** include `topology_token32` in any actuation. REL accepts commands only from ICM (admin) or its two boundary SENS neighbors configured in topology.
+
+### REL → ICM (Live)
+
+- **RLY_STATE** — current bitmask, last actuation result (OK/interlock/thermal/rate), per‑channel faults optional.
+- Triggers: on change and at configured report period.
+
+---
+
+## 3) SENS — Sensor Module (production)
+
+### ICM → SENS (Control)
+
+- **TF‑Luna A/B:** enable/disable, **FPS (1..250)**, continuous/trigger, set **I²C addresses (A and B)**; persist.
+- **Presence/geometry (persist):** near/far (mm) and A↔B baseline spacing.
+- **ALS (VEML7700):** set day/night thresholds (hysteresis); request live **lux**.
+- **ENV (BME280):** request **T/RH/P** sample.
+- **Sequencing behavior (persist):** confirm/stop windows, default relay pulse/hold, lead count & step delay.
+- **Topology (persist):**
+  - Neighbors (SENS ±1): `prev_sens = {mac, token32}`, `next_sens = {mac, token32}`.
+  - Ordered relays:
+    - `NEGRLS[]` (behind/prev) — ordered array of `{relay_mac, relay_token32}`
+    - `POSRLS[]` (ahead/next) — ordered array of `{relay_mac, relay_token32}`
+
+> Any control that results in this SENS commanding relays MUST include `topology_token32`.
+
+### SENS → ICM (Live)
+
+- **SENS_REPORT** — TF‑Luna A/B: `dist_mm`, `amp`, `temp_c_x100`, `ok`; `present` flags; **FPS**; **lux**; **t°C/rh/pressure**; health flags.
+- Cadence: FPS‑paced (decimated if needed), and edge‑trigger on presence transitions.
+
+---
+
+## 4) SEMU — Sensor Emulator (multi‑input, shared MAC; virtuals appear as individual sensors)
+
+### Web/UI Model
+
+- Each **SEMU virtual sensor** is presented as an **individual SENS** in UI tables and topology builder.
+- All virtuals share **the same physical MAC and device token**; each is addressed by `virt_id ∈ [1..SCOUNT]` (default `SCOUNT=8`).
+
+### ICM → SEMU (Control)
+
+- **Per‑virtual TF‑Luna A/B (do this 8× if `SCOUNT=8`):**
+  - Enable/disable, **FPS (1..250)**, continuous/trigger mode.
+  - **Set I²C addresses** for A and B of that virtual pair.
+  - Persist per‑virtual settings.
+- **Per‑virtual presence/spacing (persist):**
+  - near/far (mm), baseline A↔B spacing.
+- **Per‑virtual neighbors (persist):**
+  - `prev_sens = {mac, token32}` and `next_sens = {mac, token32}`.
+- **Per‑virtual ordered relays (persist):**
+  - `NEGRLS[%02u][]` and `POSRLS[%02u][]` — ordered arrays of `{relay_mac, relay_token32}` **namespaced by `virt_id`**.
+
+> Any action that leads to per‑virtual relay actuation MUST include `topology_token32`.
+
+### SEMU → ICM (Live)
+
+- **SENS_REPORT + `virt_id`** — same schema as SENS but tagged per virtual.
+- Cadence: per‑virtual FPS (decimated if needed) and presence edges.
+
+### Safety in Mixed Topologies (SENS + SEMU together)
+
+- The topology model treats every **SEMU virtual** as a **first‑class SENS entry** with fields `{mac (same as SEMU), device_token32 (same as SEMU), virt_id}`.
+- You can have both **real SENS** and **SEMU virtual SENS** in the **same lane**; ordering and neighbor checks use `(mac, virt_id)` pairs, avoiding collisions.
+
+---
+
+## 5) REMU — Relay Emulator (multi‑output, shared MAC)
+
+### ICM → REMU (Control)
+
+- Target **virtual relay** by `virt_id ∈ [1..RCOUNT]`.
+- Per‑virtual **ON/OFF/PULSE(ms)**; **mask write** for groups (mapped by SR chips).
+- Per‑virtual timing (persist): pulse/hold overrides; report cadence; interlock JSON.
+- Per‑virtual boundaries (persist): side‑A `{mac, token32}`, side‑B `{mac, token32}`; device fallbacks allowed.
+
+> Include `topology_token32`. REMU accepts actuation only from ICM or its assigned boundary SENS for that `virt_id`.
+
+### REMU → ICM (Live)
+
+- **RLY_STATE + `virt_id`** — current logical bit or mask and last actuation result; periodic and on change.
+
+---
+
+## 6) Liveness (all non‑ICM)
+
+- **PING** (ICM→node) → **PING_REPLY** (node→ICM): role, `NOW_STATE_*` flags, local `ts_ms`; ICM computes RTT and marks online.

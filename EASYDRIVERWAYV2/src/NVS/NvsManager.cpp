@@ -125,6 +125,29 @@ void NvsManager::initializeVariables() {
   const String macTail = mac12.substring(6);
   const String uniqId  = String("DL-") + mac12;
   const String uniqNm  = String("DL_") + macTail;
+
+  // --- helpers (local) -------------------------------------------------------
+  auto hex32_of_16 = [](const uint8_t b[16]) -> String {
+    static const char* kHex = "0123456789ABCDEF";
+    char buf[33]; buf[32] = '\0';
+    for (int i = 0; i < 16; ++i) { buf[2*i] = kHex[(b[i] >> 4) & 0xF]; buf[2*i+1] = kHex[b[i] & 0xF]; }
+    return String(buf);
+  };
+  auto zeros32 = []() -> String {
+    return String("00000000000000000000000000000000");
+  };
+  auto gen16 = [](uint8_t out[16]) {
+  #if defined(ESP_PLATFORM)
+    // IDF/Arduino-ESP32 secure RNG
+    esp_fill_random(out, 16);
+  #else
+    // Fallback: mix efuse MAC and millis (test harness only)
+    uint64_t seed = 0xA5C3D2B1ULL;
+    for (int i = 0; i < 16; ++i) { seed ^= (seed << 13) ^ (seed >> 7) ^ (seed << 17); out[i] = uint8_t(seed ^ (i * 0x6D)); }
+  #endif
+  };
+
+  // --- core identity/defaults ------------------------------------------------
   PutInt   (NVS_KEY_KIND,   (int)NVS_DEF_KIND);
   PutString(NVS_KEY_DEVID,  uniqId);
   PutString(NVS_KEY_HWREV,  NVS_DEF_HWREV);
@@ -143,6 +166,36 @@ void NvsManager::initializeVariables() {
   PutBool(NVS_KEY_RGBFBK, (bool)NVS_DEF_RGBFBK);
   PutBool(NVS_KEY_BUZAHI, (bool)NVS_DEF_BUZAHI);
   PutBool(NVS_KEY_BUZFBK, (bool)NVS_DEF_BUZFBK);
+
+  // --- AUTH secrets: PMK / LMK / SALT / AKVER --------------------------------
+  // LMK exists on every device; default to zeros until pairing sets a real key
+  if (!Iskey(NVS_KEY_LMK)) {
+    PutString(NVS_KEY_LMK, zeros32());
+  }
+  // AKVER (KDF version) — set a default if missing
+  if (!Iskey(NVS_KEY_AKVER)) {
+    PutInt(NVS_KEY_AKVER, (int)1);
+  }
+
+  // ICM: generate PMK and SALT once (if missing). Other roles: ensure keys exist as zeros.
+#if defined(NVS_ROLE_ICM)
+  if (!Iskey(NVS_KEY_PMK)) {
+    uint8_t pmk[16]; gen16(pmk);
+    PutString(NVS_KEY_PMK, hex32_of_16(pmk));
+  }
+  if (!Iskey(NVS_KEY_SALT)) {
+    uint8_t salt[16]; gen16(salt);
+    PutString(NVS_KEY_SALT, hex32_of_16(salt));
+  }
+#else
+  if (!Iskey(NVS_KEY_PMK)) {
+    PutString(NVS_KEY_PMK, zeros32());
+  }
+  if (!Iskey(NVS_KEY_SALT)) {
+    PutString(NVS_KEY_SALT, zeros32());
+  }
+#endif
+
 #if defined(NVS_ROLE_ICM)
   PutString(NVS_KEY_BLENM,  uniqNm);
   PutString(NVS_KEY_APSID,  uniqNm);
@@ -165,6 +218,7 @@ void NvsManager::initializeVariables() {
   PutBool  (ICM_TSAVE_KEY,  (bool)ICM_TSAVE_DEF);
   PutString(ICM_XFMT_KEY,   ICM_XFMT_DEF);
 #endif
+
 #if defined(NVS_ROLE_PMS)
   PutBool(PMS_PAIRING_KEY, (bool)PMS_PAIRING_DEF);
   PutBool(PMS_PAIRED_KEY,  (bool)PMS_PAIRED_DEF);
@@ -190,6 +244,7 @@ void NvsManager::initializeVariables() {
   PutBool(BUZZER_ENABLE_KEY, (bool)BUZZER_ENABLE_DEFAULT);
   PutInt (BUZZER_VOLUME_KEY, (int)BUZZER_VOLUME_DEFAULT);
 #endif
+
 #if defined(NVS_ROLE_SENS)
   PutString(NVS_KEY_PRVMAC, NVS_DEF_PRVMAC);
   PutInt   (NVS_KEY_PRVTOK, (int)NVS_DEF_PRVTOK);
@@ -213,6 +268,7 @@ void NvsManager::initializeVariables() {
   PutInt(TFL_A_ADDR_KEY, TFL_ADDR_A);
   PutInt(TFL_B_ADDR_KEY, TFL_ADDR_B);
 #endif
+
 #if defined(NVS_ROLE_RELAY)
   PutString(NVS_KEY_SAMAC, NVS_DEF_SAMAC);
   PutInt   (NVS_KEY_SATOK, (int)NVS_DEF_SATOK);
@@ -226,38 +282,27 @@ void NvsManager::initializeVariables() {
   PutBool(INTERLCK_KEY,  (bool)INTERLCK_DEFAULT);
   PutInt (RTLIM_C_KEY,   (int)RTLIM_C_DEFAULT);
 #endif
+
 #if defined(NVS_ROLE_SEMU)
   // --- Global/Device-level ---
   PutInt   (NVS_KEY_SCOUNT, (int)NVS_DEF_SCOUNT);
-
-  // One global pairing state for the SEMU device
   PutBool  (SEMU_PAIRING_KEY, (bool)SEMU_PAIRING_DEF);
   PutBool  (SEMU_PAIRED_KEY,  (bool)SEMU_PAIRED_DEF);
-
-  // Global neighbor links (prev/next) and relay labels
   PutString(NVS_KEY_PRVMAC,  NVS_DEF_PRVMAC);
   PutInt   (NVS_KEY_PRVTOK,  (int)NVS_DEF_PRVTOK);
   PutString(NVS_KEY_NXTMAC,  NVS_DEF_NXTMAC);
   PutInt   (NVS_KEY_NXTTOK,  (int)NVS_DEF_NXTTOK);
   PutString(NVS_KEY_POSRLS,  NVS_DEF_POSRLS);
   PutString(NVS_KEY_NEGRLS,  NVS_DEF_NEGRLS);
-
-  // Virtual output behavior (global defaults)
   PutInt (VON_MS_KEY,    (int)VON_MS_DEF);
   PutInt (VLEAD_CT_KEY,  (int)VLEAD_CT_DEF);
   PutInt (VLEAD_MS_KEY,  (int)VLEAD_MS_DEF);
-
-  // One ambient light sensor shared by all pairs
   PutInt (ALS_T0_LUX_KEY, (int)ALS_T0_LUX_DEFAULT);
   PutInt (ALS_T1_LUX_KEY, (int)ALS_T1_LUX_DEFAULT);
-
-  // Emit ENV model per virtual sensor (0/1)
   PutBool(VENV_EN_KEY, (bool)VENV_EN_DEF);
 
-  // --- Per-pair (index 0..count-1) defaults ---
   {
     const int count = GetInt(NVS_KEY_SCOUNT, (int)NVS_DEF_SCOUNT);
-    // Safer buffer; prefixes are 6 chars, plus up to 2 digits and NUL
     auto put_u16_by_pfx = [&](const char* pfx, int idx, uint16_t val) {
       char key[12]; snprintf(key, sizeof(key), "%s%d", pfx, idx);
       PutInt(key, (int)val);
@@ -268,39 +313,28 @@ void NvsManager::initializeVariables() {
     };
 
     for (int i = 0; i < count; ++i) {
-      // Per-pair near/far thresholds (mm)
       put_u16_by_pfx(TF_NEAR_MM_KEY_PFX, i, (uint16_t)TF_NEAR_MM_DEFAULT);
       put_u16_by_pfx(TF_FAR_MM_KEY_PFX,  i, (uint16_t)TF_FAR_MM_DEFAULT);
-
-      // Per-pair A↔B spacing (mm)
       put_u16_by_pfx(AB_SPACING_MM_KEY_PFX, i, (uint16_t)AB_SPACING_MM_DEFAULT);
-
-      // Per-pair TF-Luna I2C addresses
       put_u8_by_pfx (TFL_A_ADDR_KEY_PFX, i, (uint8_t)TFL_ADDR_A_DEF);
       put_u8_by_pfx (TFL_B_ADDR_KEY_PFX, i, (uint8_t)TFL_ADDR_B_DEF);
-
-      // Per-pair frame rate (FPS)
       put_u16_by_pfx(TFL_FPS_KEY_PFX, i, (uint16_t)TFL_FPS_DEF);
     }
 
-    // Keep your existing per-virtual security token + neighbor MAC/TOK init (1-based)
     const uint64_t ef   = ESP.getEfuseMac();
     const uint32_t seed = (uint32_t)(ef ^ (ef >> 23) ^ 0xA5A5A5A5UL);
     for (int i = 1; i <= count; ++i) {
-      // Virtual token
       char vtkey[7]; vtkey[6] = '\0';
       snprintf(vtkey, sizeof(vtkey), NVS_SEMU_VTOK_FMT, (unsigned)i);
       uint32_t vtok = (seed ^ (i * 2654435761UL)) & 0xFFFFu; if (vtok == 0) vtok = 1;
       PutInt(vtkey, (int)vtok);
 
-      // Prev link
       char pM[7], pT[7]; pM[6]=pT[6]='\0';
       snprintf(pM, sizeof(pM), NVS_SEMU_PMAC_FMT, (unsigned)i);
       snprintf(pT, sizeof(pT), NVS_SEMU_PTOK_FMT, (unsigned)i);
       PutString(pM, NVS_DEF_MAC_EMPTY);
       PutInt   (pT, 0);
 
-      // Next link
       char nM[7], nT[7]; nM[6]=nT[6]='\0';
       snprintf(nM, sizeof(nM), NVS_SEMU_NMAC_FMT, (unsigned)i);
       snprintf(nT, sizeof(nT), NVS_SEMU_NTOK_FMT, (unsigned)i);
@@ -311,60 +345,42 @@ void NvsManager::initializeVariables() {
 #endif
 
 #if defined(NVS_ROLE_REMU)
-  // Size of the emulator (defaults to 16)
-  PutInt(NVS_KEY_RCOUNT, (int)NVS_DEF_RCOUNT);             // e.g., 16
-
-  // Optional device-level boundary mapping defaults (shared)
+  PutInt(NVS_KEY_RCOUNT, (int)NVS_DEF_RCOUNT);
   PutString(NVS_KEY_SAMAC, NVS_DEF_SAMAC);
   PutInt   (NVS_KEY_SATOK, (int)NVS_DEF_SATOK);
   PutString(NVS_KEY_SBMAC, NVS_DEF_SBMAC);
   PutInt   (NVS_KEY_SBTOK, (int)NVS_DEF_SBTOK);
   PutInt   (NVS_KEY_SPLIT, (int)NVS_DEF_SPLIT);
+  PutInt (RPULSE_MS_KEY, (int)RPULSE_MS_DEF);
+  PutInt (RHOLD_MS_KEY,  (int)RHOLD_MS_DEF);
+  PutInt (RREP_MS_KEY,   (int)RREP_MS_DEF);
+  PutString(RILOCK_JS_KEY, RILOCK_JS_DEF);
 
-  // Global relay behavior defaults (device-level)
-  PutInt (RPULSE_MS_KEY, (int)RPULSE_MS_DEF);              // default ON ms
-  PutInt (RHOLD_MS_KEY,  (int)RHOLD_MS_DEF);               // default cap ms
-  PutInt (RREP_MS_KEY,   (int)RREP_MS_DEF);                // report cadence
-  PutString(RILOCK_JS_KEY, RILOCK_JS_DEF);                 // interlock groups (JSON)
-
-  // ---------- Per-virtual setup (index 0..count-1) ----------
   {
     const int count = GetInt(NVS_KEY_RCOUNT, (int)NVS_DEF_RCOUNT);
-
-    // Small helpers: write prefixed u16 (prefix + index)
     auto put_u16 = [&](const char* pfx, int idx, uint16_t val){
       char key[12]; snprintf(key, sizeof(key), "%s%d", pfx, idx);
       PutInt(key, (int)val);
     };
-
-    // Per-relay defaults (override keys)
     for (int i = 0; i < count; ++i) {
-      put_u16(RPULSE_MS_PFX, i, (uint16_t)RPULSE_MS_DEF);  // per-output pulse
-      put_u16(RHOLD_MS_PFX,  i, (uint16_t)RHOLD_MS_DEF);   // per-output hold cap
+      put_u16(RPULSE_MS_PFX, i, (uint16_t)RPULSE_MS_DEF);
+      put_u16(RHOLD_MS_PFX,  i, (uint16_t)RHOLD_MS_DEF);
     }
-
-    // Security tokens & per-virtual A/B boundary mapping
-    // Formats are defined centrally in NVSConfig.h:
-    //   O%02uTOK, A%02uMAC/A%02uTOK, B%02uMAC/B%02uTOK
     const uint64_t ef   = ESP.getEfuseMac();
     const uint32_t seed = (uint32_t)((ef >> 16) ^ ef ^ 0x5C5C3C3CUL);
-
     for (int i = 1; i <= count; ++i) {
-      // Virtual relay token (OxxTOK)
       char ok[7]; ok[6] = '\0';
       snprintf(ok, sizeof(ok), NVS_REMU_OTOK_FMT, (unsigned)i);
       uint32_t otok = ((seed << 1) ^ (i * 1140071485UL)) & 0xFFFFu;
       if (otok == 0) otok = 1;
       PutInt(ok, (int)otok);
 
-      // Boundary sensor A (AxxMAC/AxxTOK)
       char aM[7], aT[7]; aM[6]=aT[6]='\0';
       snprintf(aM, sizeof(aM), NVS_REMU_AMAC_FMT, (unsigned)i);
       snprintf(aT, sizeof(aT), NVS_REMU_ATOK_FMT, (unsigned)i);
       PutString(aM, NVS_DEF_MAC_EMPTY);
       PutInt   (aT, 0);
 
-      // Boundary sensor B (BxxMAC/BxxTOK)
       char bM[7], bT[7]; bM[6]=bT[6]='\0';
       snprintf(bM, sizeof(bM), NVS_REMU_BMAC_FMT, (unsigned)i);
       snprintf(bT, sizeof(bT), NVS_REMU_BTOK_FMT, (unsigned)i);

@@ -1,0 +1,160 @@
+# README — Tokens (32‑bit AlphaNumeric), Pairing, Topology (with SEMU Virtuals), Rotation & Peer‑to‑Peer Relaying
+
+This document defines **token formats (32‑bit alphanumeric)**, pairing, topology push/validation that works safely with **SEMU virtual sensors appearing as individual sensors in the Web UI**, rotation policy, and **peer‑to‑peer multi‑hop relaying** when the ICM is out of range. It ensures **SENS** and **SEMU** mixed topologies never collide and that **SEMU** can configure all TF‑Luna pair parameters **per virtual** (e.g., 8× when `SCOUNT=8`).
+
+---
+
+## 1) Tokens (formats & storage)
+
+- **Device Token (32‑bit alphanumeric)** — authenticates **who** is talking.  
+  Format: **8‑char uppercase hex** (e.g., `7AC1F2B0`).  
+  Storage:
+  - Device: NVS key `TOKEN_` (one per device).
+  - ICM: registry mapped by device MAC.
+
+- **Topology Token (32‑bit alphanumeric)** — authorizes **what** actions are allowed under the **current** topology.  
+  Format: **8‑char uppercase hex**.  
+  Storage: RAM on all nodes (optionally persisted) as `topology_token32`.
+
+**Derivation examples (non‑cryptographic):**
+- Device token = `HEX32( CRC32( ICM_MAC || DEV_MAC || RNG32 ) )`
+- Topology token = `HEX32( CRC32( EPOCH_SEC || ICM_MAC || RNG32 ) )`
+
+> Use `esp_random()` for RNG32. Token size is fixed by requirement (32‑bit alphanumeric).
+
+---
+
+## 2) Pairing (ICM‑issued device tokens)
+
+1) Device → ICM: `PAIR_REQ` includes `sender_mac`.  
+2) ICM computes `device_token32` and selects channel.  
+3) ICM → Device: `PAIR_ACK { icm_mac, device_token32, channel }`.  
+4) Device persists: `ICMMAC`, `TOKEN_`, `CHAN__`, `PAIRED=1`.
+
+**Post‑pair rule:** every frame carries `{ sender_mac, sender_device_token32, ts_ms }`. Unknown MAC or mismatched token → **drop**.
+
+---
+
+## 3) Topology Push — **SEMU virtuals are first‑class SENS entries**
+
+ICM is authoritative and emits **one** `TOPO_PUSH` with:
+
+- **Global:** `topology_token32` (applies to all relations).
+
+- **Section: SENS (production)** (zero or more entries)
+  - `self`: `{ mac, device_token32 }`
+  - `prev_sens`: `{ mac, device_token32 }`
+  - `next_sens`: `{ mac, device_token32 }`
+  - `neg_relays[]`: ordered `[{ mac, device_token32 }, …]`
+  - `pos_relays[]`: ordered `[{ mac, device_token32 }, …]`
+  - Node persists: `PRVMAC/PRVTOK`, `NXTMAC/NXTTOK`, `NEGRLS`, `POSRLS`
+
+- **Section: SEMU_VSENS (SEMU virtual sensors)** (zero or more entries)
+  - Each entry is a **virtual SENS** record:
+    - `self`: `{ mac = SEMU_mac, device_token32 = SEMU_device_token32, virt_id }`
+    - `prev_sens`: `{ mac, device_token32 }`
+    - `next_sens`: `{ mac, device_token32 }`
+    - `neg_relays[%02u][]`: ordered `[{ mac, device_token32 }, …]` (namespaced by `virt_id`)
+    - `pos_relays[%02u][]`: ordered `[{ mac, device_token32 }, …]` (namespaced by `virt_id`)
+  - Node persists per‑virtual neighbors/lists to `P%02uMAC/P%02uTOK`, `N%02uMAC/N%02uTOK`, and per‑virtual relay lists (namespaced).
+
+> **SEMU validation rule:** the **same** physical `mac` and **same** `device_token32` are used for all virtuals; `virt_id` distinguishes instances. This avoids MAC/token collisions and allows SENS and SEMU to co‑exist in the same lane safely.
+
+- **Section: REL (production)** (zero or more entries)
+  - `self`: `{ mac, device_token32 }`
+  - `side_a`: `{ mac, device_token32 }`
+  - `side_b`: `{ mac, device_token32 }`
+  - Node persists: `SAMAC_/SATOK_`, `SBMAC_/SBTOK_` (+`SPLIT_` optional)
+
+- **Section: REMU (virtual relays)** (zero or more entries)
+  - `self`: `{ mac, device_token32, RCOUNT }`
+  - Per `virt_id`: `side_a = { mac, device_token32 }`, `side_b = { mac, device_token32 }`
+  - Device fallbacks allowed: `SAMAC_/SATOK_`, `SBMAC_/SBTOK_`
+
+**Node behavior on valid push:**
+- Overwrite neighbor/list structures atomically.
+- Install the new `topology_token32`.
+- Emit a brief “topology applied” event for logs (optional).
+
+---
+
+## 4) Per‑virtual TF‑Luna Configuration on SEMU (8× when `SCOUNT=8`)
+
+For each `virt_id ∈ [1..SCOUNT]`, SEMU MUST accept and persist **all** parameters that SENS supports **independently**:
+
+- **TF‑Luna A/B:** enable/disable, **FPS (1..250)**, mode (continuous/trigger).
+- **I²C addresses:** set A and B addresses for that virtual pair.
+- **Presence/geometry:** near/far (mm), baseline A↔B spacing.
+- **Neighbors:** per‑virtual `prev_sens` and `next_sens` (MAC + token).
+- **Ordered relays:** per‑virtual NEG/POS ordered arrays of `{relay_mac, relay_token32}`.
+
+> This guarantees the Web tool can configure each SEMU virtual exactly like a real SENS, 8× when `SCOUNT=8`, with no UI or topology collisions.
+
+---
+
+## 5) Validation on Receive (all roles)
+
+1) Known MAC? Else **drop** (`AUTH_FAIL_MAC`).  
+2) Device token matches registry/NVS? Else **drop** (`AUTH_FAIL_DEV`).  
+3) Command affects chain/actuation? Validate `topology_token32`. Else **drop** (`AUTH_FAIL_TOPO`).  
+4) Role‑based source rules:  
+   - REL/REMU accept only from ICM or their configured boundary SENS (for `virt_id` if REMU); else **drop** (`AUTH_FAIL_SRC`).  
+5) Execute and respond; replies carry `{ sender_mac, sender_device_token32, ts_ms }`.
+
+---
+
+## 6) Token Rotation (optional today, supported by format)
+
+- ICM **may** rotate `topology_token32` on **every** `TOPO_PUSH`.  
+- Endpoints must reject control frames with a previous topology token immediately after apply.  
+- Device token rotation (re‑pair) revokes a node globally.
+
+> Tokens are 32‑bit; rotation frequency is your policy (per push is recommended for safety).
+
+---
+
+## 7) Peer‑to‑Peer Multi‑Hop (when ICM is out of range)
+
+**Goal:** ICM can unicast to the nearest reachable neighbor; nodes **store‑and‑forward** along the chain to `dest_mac`.
+
+**Forwardable frame fields:**
+- `dest_mac`, `hop_ttl` (4–8), `route_dir` (`PREV`/`NEXT`/`ANY`),
+- plus the usual `{ sender_mac, sender_device_token32, ts_ms }` and `topology_token32` when needed.
+
+**Forwarding rule:**
+- If `dest_mac == self_mac` → process locally.
+- Else if `dest_mac` is in **prev‑side set** (prev SENS or NEG relays) → forward to **prev**.
+- Else if in **next‑side set** (next SENS or POS relays) → forward to **next**.
+- Else probe `ANY` once, then pin direction for this message.
+- Decrement `hop_ttl`; drop at 0.
+
+**Who forwards?**
+- **SENS/SEMU** (chain aware via neighbors + lists), **REL/REMU** (boundary aware). PMS not chain‑aware by default.
+
+**Validation end‑to‑end:** tokens are checked at the **final recipient**; intermediate forwarders do not need destination’s token.
+
+---
+
+## 8) Minimal Command Set (token requirements)
+
+| Opcode         | Direction                       | `topology_token32` | Notes |
+|----------------|---------------------------------|--------------------|-------|
+| `PAIR_REQ`     | Device → ICM                    | No                 | `sender_mac` only |
+| `PAIR_ACK`     | ICM → Device                    | No                 | `device_token32`, channel |
+| `TOPO_PUSH`    | ICM → Node(s)                   | No                 | Installs neighbors/lists + `topology_token32` |
+| `CTRL_RELAY`   | ICM/SENS/SEMU → REL/REMU        | **Yes**            | Include `virt_id` for REMU |
+| `SENS_REPORT`  | SENS/SEMU → ICM                 | No                 | Telemetry (per virtual for SEMU) |
+| `RLY_STATE`    | REL/REMU → ICM                  | No                 | Actuation result |
+| `PMS_STATUS`   | PMS → ICM                       | No                 | Rails/thermal |
+| `CONFIG_WRITE` | ICM → Node                      | No (unless actuation) | Persist role keys |
+| `PING`         | ICM → Node                      | No                 | Liveness |
+| `PING_REPLY`   | Node → ICM                      | No                 | Role, state flags, local `ts_ms` |
+| `TIME_SYNC`    | ICM → Node                      | No                 | Clock update |
+
+---
+
+## 9) Interop Guarantees for Mixed SENS + SEMU
+
+- **SEMU virtuals** are serialized as SENS‑like entries with `{ mac = SEMU_mac, device_token32 = SEMU_device_token32, virt_id }` and their **own** neighbor/relay lists.  
+- **Real SENS** keep their plain `{ mac, device_token32 }` with no `virt_id`.  
+- All chain checks use **(mac, virt_id)** tuples (with `virt_id = 0xFF` for physical SENS/REL when not virtual), so **no collisions** occur when SENS and SEMU share a lane.

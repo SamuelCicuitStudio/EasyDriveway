@@ -1,0 +1,11 @@
+sparkfun/SparkFun MAX1704x Fuel Gauge Arduino Library@^1.0.4
+adafruit/RTClib@^2.1.4
+sparkfun/SparkFun VEML7700 Arduino Library@^2.0.1
+milesburton/DallasTemperature@^4.0.4
+adafruit/SdFat - Adafruit Fork@^2.3.54
+plerup/EspSoftwareSerial@^8.2.0
+https://github.com/budryerson/TFLuna-I2C.git
+adafruit/Adafruit BME280 Library@^2.3.0
+arduino-libraries/NTPClient@^3.2.1
+paulstoffregen/Time@^1.6.1
+bblanchon/ArduinoJson@^7.2.0

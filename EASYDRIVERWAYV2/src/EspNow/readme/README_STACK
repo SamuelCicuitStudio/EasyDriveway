@@ -1,0 +1,768 @@
+# EasyDriveway ESPNOW Protocol v2H — Implementation Specification
+
+## 0. Scope and goals
+
+This document defines the wire protocol, security model, message taxonomy, state machines, and validation/processing rules for all roles in the EasyDriveway system communicating over ESP-NOW. It is **normative**: all MUST/SHOULD/MAY keywords follow RFC-2119 semantics.
+
+Primary goals:
+
+- **Confidential integrity** with per-peer keys and mandatory HMAC on all frames except the first pairing request.
+- **Spoof-resistance** via 128-bit device tokens and role+MAC gatekeeping for privileged operations.
+- **Deterministic decoding** with fixed-width field ordering, little-endian integers, and tightly packed payloads sized to fit ESPNOW MTU.
+- **Topology authority** (ICM) pushes an authenticated TLV blob; command paths enforce matching topology token when required.
+- **Updatable nodes** via chunked, windowed firmware transfer with cryptographic image verification.
+
+Non-goals:
+
+- Transport-layer reliability beyond basic duplicate suppression and idempotent handlers.
+- Backward compatibility with pre-v2 stacks.
+
+---
+
+## 1. Device roles
+
+Every endpoint MUST advertise exactly one role code:
+
+| Role | Code | Description                                                                    |
+| ---- | ---: | ------------------------------------------------------------------------------ |
+| ICM  | 0x00 | Interface Control Module (controller/UI; authority for topology and admin ops) |
+| PMS  | 0x01 | Power Management/rails/thermal                                                 |
+| REL  | 0x02 | Physical relay module                                                          |
+| SENS | 0x03 | Physical sensor module (TF-Luna pair + ENV)                                    |
+| REMU | 0x05 | Relay emulator (virtual relays behind one MAC)                                 |
+| SEMU | 0x06 | Sensor emulator (virtual sensors behind one MAC)                               |
+
+For REMU/SEMU, virtual endpoints are addressed by `virt_id` (1..N). Physical endpoints use `virt_id = 0xFF`.
+
+---
+
+## 2. Wire format and packing
+
+- All integers are **little-endian**.
+- All structures are **packed** (no padding). Field order is normative.
+- **MTU budget**: ESPNOW payload ≈ 250 bytes. This spec keeps fixed headers compact to maximize payload space.
+- **Byte sizes** (MUST match exactly):
+
+  - `NowHeader`: 23 B
+  - `NowAuth128`: 16 B
+  - `NowTopoToken128`: 16 B
+  - `NowSecTrailer`: 6 B nonce + 12 B tag = 18 B
+  - See per-message payload sizes in §6 and the appendix.
+
+Receivers MUST reject frames whose sizes don’t match the declared structure for the message type.
+
+---
+
+## 3. Security model
+
+### 3.1 Keys and peers
+
+- **All peers MUST be added as encrypted ESPNOW peers** (PMK+LMK, `encrypt=true`).
+- **LMK derivation (per-peer)** (example; implementer may keep format but MUST remain deterministic and peer-unique):
+
+  ```
+  LMK = Trunc16( HMAC-SHA256( PMK,
+            MAC_lo || MAC_hi || DEV_TOK_A || DEV_TOK_B || DEPLOY_SALT ))
+  ```
+
+  - `MAC_lo/hi`: lexicographically ordered MAC addresses for the pair.
+  - `DEV_TOK_*`: 128-bit device tokens (see below).
+  - `DEPLOY_SALT`: fleet secret only present on ICM build chain.
+
+ICM is the key authority (out-of-band provisioning or secure pairing).
+
+### 3.2 Tokens
+
+- **Device token (128 bits)** appears on every frame **except** `PAIR_REQ`.
+- **Topology token (128 bits)** appears only on **topology-dependent commands** (e.g., `CTRL_RELAY`). Presence is signaled by `NOW_FLAGS_HAS_TOPO` and the token is carried via `NowTopoToken128`.
+
+### 3.3 HMAC trailer (mandatory)
+
+All frames except `PAIR_REQ` MUST include:
+
+- `nonce` (6 B): 48-bit monotonic sender counter or ms timestamp (rolling wrap allowed).
+- `tag` (12 B): Truncated HMAC-SHA256 over:
+
+  ```
+  NowHeader || NowAuth128 || [NowTopoToken128?] || payload || nonce
+  ```
+
+- Key: a per-peer **application key** derived from PMK, LMK, device token, and SALT.
+- Receivers MUST:
+
+  1. Confirm peer is encrypted.
+  2. Verify HMAC using the peer’s app key.
+  3. Enforce replay/nonce monotonicity per sender (keep last-seen value with windowing).
+
+### 3.4 Privileged operations
+
+These message types MUST be accepted **only** when:
+
+```
+sender_role == ICM AND sender_mac == ICMMAC
+```
+
+- `TOPO_PUSH`, `NET_SET_CHAN`, `TIME_SYNC`, all `FW_*` messages.
+
+---
+
+## 4. Addressing and header
+
+### 4.1 Standard header (23 bytes)
+
+```
+struct NowHeader {
+  u8  proto_ver;       // MUST be 3
+  u8  msg_type;        // §6 opcode
+  u16 flags;           // bitfield §4.2
+  u16 seq;             // per-sender sequence (16-bit, wrap permitted)
+  u16 topo_ver;        // incremented by ICM on TOPO_PUSH
+  u8  virt_id;         // 0xFF physical, 1..N for virtuals
+  u8  reserved;        // MUST be zero
+  u8  ts_ms[6];        // lower 48 bits of ms at sender
+  u8  sender_mac[6];   // hardware MAC (station)
+  u8  sender_role;     // §1 role code
+}
+```
+
+### 4.2 Flags
+
+- `HAS_TOPO` (0x0001): `NowTopoToken128` immediately precedes payload.
+- `URGENT` (0x0002): Scheduler hint (priority queuing).
+- Others reserved.
+
+### 4.3 Sequencing and duplicate suppression
+
+Receivers maintain `last_seq` per `(sender_mac, msg_type)`. A frame is a **duplicate** if its `seq` is within a small backward window (e.g., 32) of `last_seq`. Idempotent handlers MUST tolerate duplicates. Non-idempotent handlers SHOULD check semantic duplication (e.g., already applied `NET_SET_CHAN`).
+
+---
+
+## 5. Processing pipeline (receiver)
+
+For every inbound frame:
+
+1. **Transport checks**: encrypted peer present; RSSI filter (optional).
+2. **Length check** against expected size for `msg_type` (+ optional topo token).
+3. **Decode header**; verify `proto_ver == 3` and `reserved == 0`.
+4. **Auth presence**: reject if message != `PAIR_REQ` and auth/HMAC missing.
+5. **Role gating** for privileged messages (§3.4).
+6. **HMAC verify** (§3.3). On failure: drop + optionally increment a DoS counter.
+7. **Replay/nonce** window check (per sender).
+8. **Topology token**: if `HAS_TOPO`, verify token bound to current `topo_ver`.
+9. **Dispatch** to message-specific validator and handler (§6).
+10. **Acknowledge** (when applicable) using the response types defined below.
+
+**All validation errors MUST NOT generate plaintext error responses.** If you respond, sign it.
+
+---
+
+## 6. Message taxonomy (opcodes, payloads, sizes)
+
+**Opcode map**:
+
+| Group    | Type           | Code | Direction              | Payload                  |    Size |
+| -------- | -------------- | ---: | ---------------------- | ------------------------ | ------: |
+| Pairing  | `PAIR_REQ`     | 0x00 | Dev→ICM                | — (no Auth/HMAC)         |       0 |
+| Pairing  | `PAIR_ACK`     | 0x01 | ICM→Dev                | `NowPairAck`             |      24 |
+| Topology | `TOPO_PUSH`    | 0x02 | ICM→All                | `NowTopoPush` + TLV      | 4 + TLV |
+| Network  | `NET_SET_CHAN` | 0x03 | ICM→Dev                | `NowNetSetChan`          |       4 |
+| Control  | `CTRL_RELAY`   | 0x10 | ICM/SENS/SEMU→REL/REMU | `NowCtrlRelay`           |       4 |
+| Reports  | `SENS_REPORT`  | 0x20 | SENS/SEMU→ICM          | `NowSensReport`          |      30 |
+| Reports  | `RLY_STATE`    | 0x21 | REL/REMU→ICM           | `NowRlyState`            |       4 |
+| Reports  | `PMS_STATUS`   | 0x22 | PMS→ICM                | `NowPmsStatus`           |      17 |
+| Config   | `CONFIG_WRITE` | 0x30 | ICM→Any                | `NowConfigWrite` + value |   8 + V |
+| Service  | `PING`         | 0x40 | ICM→Any                | `NowPing`                |       2 |
+| Service  | `PING_REPLY`   | 0x41 | Any→ICM                | `NowPingReply`           |       5 |
+| Service  | `TIME_SYNC`    | 0x42 | ICM→Any                | `NowTimeSync`            |       8 |
+| FW       | `FW_BEGIN`     | 0x50 | ICM→Any                | `NowFwBegin`             |      52 |
+| FW       | `FW_CHUNK`     | 0x51 | ICM→Any                | `NowFwChunk` + data      |  12 + N |
+| FW       | `FW_STATUS`    | 0x52 | Any→ICM                | `NowFwStatus`            |      16 |
+| FW       | `FW_COMMIT`    | 0x53 | ICM→Any                | `NowFwCommit` + sig      |   8 + S |
+| FW       | `FW_ABORT`     | 0x54 | ICM→Any                | `NowFwAbort`             |       8 |
+
+**All sizes exclude** the outer `NowHeader`, `NowAuth128`, optional `NowTopoToken128`, and `NowSecTrailer`.
+
+### 6.1 Pairing
+
+- `PAIR_REQ` (0x00) — sent **unencrypted, unauthenticated** (only message allowed so). Contains only `NowHeader`. Receiver (ICM) must rate-limit.
+- `PAIR_ACK` (0x01)
+
+  ```
+  struct NowPairAck {
+    u8  icm_mac[6];
+    u8  channel;     // 1..13 (region-valid)
+    u8  reserved;    // 0
+    u8  device_token128[16];
+  }
+  ```
+
+  **ICM MUST** send this encrypted and authenticated (pair succeeds only after peer provisioning). After ack, device stores token and channel.
+
+**Pairing flow** (ICM side, simplified):
+
+1. Receive `PAIR_REQ` from unknown MAC.
+2. Out-of-band authorize (UI/operator).
+3. Provision LMK for that MAC; add encrypted peer.
+4. Send `PAIR_ACK` with device token and chosen channel.
+5. Add peer to controller registry; require HMAC on subsequent messages.
+
+### 6.2 Topology push (ICM authority)
+
+`TOPO_PUSH` (0x02) is a header + TLV blob:
+
+```
+struct NowTopoPush {
+  u8  topo_fmt;   // 1 = TLV_V1
+  u8  reserved;   // 0
+  u16 topo_len;   // length of following TLV blob
+  // followed by topo_len bytes of TLV
+}
+```
+
+**TLV items**:
+
+- `NOW_TLV_NODE_ENTRY (0x10)` — per-node/virt description.
+- `NOW_TLV_TOPO_VERSION (0x11)` — u16 version (redundant with header).
+- **Auth (one MUST be present)**:
+
+  - `NOW_TLV_TOPO_AUTH_HMAC (0xF0)` — 16-byte tag for the TLV (keyed derivation distinct from frame HMAC key).
+  - `NOW_TLV_TOPO_AUTH_SIG (0xF1)` — signature bytes over TLV digest (Ed25519 or ECDSA-P256).
+
+**Node processing**:
+
+- Accept only from `(ICM, ICMMAC)`.
+- Verify TLV auth item.
+- Persist `topo_ver`.
+- (Optional) derive/update `topology_token128` that will be required for certain commands.
+
+### 6.3 Network channel switch
+
+`NET_SET_CHAN` (0x03):
+
+```
+struct NowNetSetChan { u8 new_channel; u8 reserved; u16 wait_ms; }
+```
+
+Rules:
+
+- Accept only from ICM.
+- On acceptance: persist a “pending channel” config; start a countdown for `wait_ms`. At `t = wait_ms`, re-init radio to `new_channel`.
+- **ICM** should switch its own radio slightly **before** node’s moment (e.g., `wait_ms - 100 ms`) and immediately PING on the new channel.
+
+### 6.4 Relay control
+
+`CTRL_RELAY` (0x10): **topology-dependent → MUST carry topology token.**
+
+```
+struct NowCtrlRelay { u8 channel; u8 op; u16 pulse_ms; }
+op: 0=NOP, 1=OFF, 2=ON, 3=PULSE
+```
+
+- For REL: `channel` is a physical output index.
+- For REMU: `virt_id` (header) selects virtual relay; `channel` maps into the device bitset.
+
+**Validation**:
+
+- Require `HAS_TOPO` flag and a valid `NowTopoToken128` against current `topo_ver`.
+- Enforce interlocks (rate limits, thermal, mutual exclusion).
+- Emit `RLY_STATE` with the full bitmask of outputs as observed after the command.
+
+`RLY_STATE` (0x21):
+
+```
+struct NowRlyState { u16 bitmask; u8 result; u8 rsv; }
+result:
+  0 OK, 1 INTERLOCK, 2 THERMAL, 3 RATE, 4 DENIED, 5 TOPO_MISM, 15 OTHER
+```
+
+### 6.5 Sensor reporting
+
+`SENS_REPORT` (0x20) — sent periodically or on change:
+
+```
+struct NowTFPairSample {
+  i16 dist_mm; u16 amp; i16 temp_c_x100; u8 ok; u8 rsv;
+}
+struct NowSensReport {
+  NowTFPairSample A, B;
+  u16 lux;
+  i16 t_c_x100;
+  u16 rh_x100;
+  u32 press_pa;
+  u16 fps;
+  u8  present_flags; // bit0: forward present, bit1: reverse present
+  u8  health;        // module health bitfield
+} // 30B
+```
+
+ICM should accept both SENS and SEMU (where `virt_id` disambiguates virtuals).
+
+### 6.6 PMS telemetry
+
+`PMS_STATUS` (0x22):
+
+```
+struct NowPmsStatus {
+  u8  source_sel; // 0=wall,1=bat
+  u8  rails;      // bitmask
+  u16 vbus_mv, ibus_ma, vbat_mv, ibat_ma;
+  i16 temp_c_x10;
+  u8  fan_pwm;
+  u16 fan_rpm;
+  u16 faults;     // OVP/UVP/OCP/OTP/...
+} // 17B
+```
+
+### 6.7 Configuration write
+
+`CONFIG_WRITE` (0x30) — one key per frame:
+
+```
+struct NowConfigWrite {
+  char key6[6]; // raw 6 chars, no NUL
+  u8   type;    // U8,U16,U32,I16,I32,STR6,BIN
+  u8   len;     // used for STR6,BIN only
+  // followed by value bytes (bounded by role-specific cap)
+}
+```
+
+Rules:
+
+- Exactly one key per frame.
+- For `STR6`, exactly 6 bytes; for `BIN`, `len` MUST be <= role cap.
+- On success, node SHOULD persist atomically and respond with `PING_REPLY` echoing `state_flags`, or remain silent (implementation choice). If responding, **sign it**.
+
+### 6.8 Service: ping & time sync
+
+`PING` (0x40):
+`struct NowPing { u16 echo_seq; }`
+
+`PING_REPLY` (0x41):
+`struct NowPingReply { u16 echo_seq; u8 role; u16 state_flags; }`
+`state_flags`:
+`AUTO (1<<0), MANUAL (1<<1), UPDATING (1<<2), STARTING_UP (1<<3), BUSY (1<<4), PAIRING (1<<5), IDLE (1<<6)`
+
+`TIME_SYNC` (0x42):
+`struct NowTimeSync { u64 icm_epoch_ms; }`
+Accept only from ICM. Nodes may slew local clock or simply reference it for `ts_ms` stamping.
+
+### 6.9 Firmware update
+
+#### 6.9.1 Metadata
+
+- Target roles: `{ICM, PMS, REL, SENS, REMU, SEMU}` (codes equal to role IDs).
+- States: `IDLE=0, RECEIVING=1, READY=2, VERIFYING=3, APPLYING=4, REBOOTING=5, ERROR=15`
+- Abort reasons: `OPERATOR, ROLE_MISM, VERSION, SPACE, CRC, DIGEST, INTERNAL (15)`
+
+#### 6.9.2 Messages
+
+`FW_BEGIN` (0x50) — 52 B:
+
+```
+struct NowFwBegin {
+  u32 image_id;
+  u8  target_role;   // NowFwTargetRole
+  u8  sig_algo;      // 1=Ed25519,2=ECDSA-P256
+  u16 window_size;   // chunks per window (8..32 recommended)
+
+  u32 total_size;
+  u16 chunk_size;
+  u16 total_chunks;
+
+  u32 target_version; // (maj<<24)|(min<<16)|(pat<<8)|build
+  u8  sha256[32];     // expected image digest
+}
+```
+
+`FW_CHUNK` (0x51) — 12 B header + `data_len` bytes:
+
+```
+struct NowFwChunk {
+  u32 image_id;
+  u32 chunk_index;   // 0..total_chunks-1
+  u16 data_len;      // <= chunk_size
+  u16 crc16_ccitt;   // over payload data
+  // followed by data_len bytes
+}
+```
+
+`FW_STATUS` (0x52) — 16 B:
+
+```
+struct NowFwStatus {
+  u32 image_id;
+  u32 next_needed;     // next chunk index wanted by node
+  u32 received_bytes;  // cumulative
+  u8  state;           // NowFwState
+  u8  rsv0;
+  u16 last_error;      // 0=OK else code
+}
+```
+
+`FW_COMMIT` (0x53) — 8 B + signature:
+
+```
+struct NowFwCommit {
+  u32 image_id;
+  u8  apply_at_boot;   // 1=mark pending & reboot; 0=verify only
+  u8  sig_len;         // signature length
+  u16 rsv0;
+  // followed by sig_len bytes (signature over image SHA-256)
+}
+```
+
+`FW_ABORT` (0x54) — 8 B:
+
+```
+struct NowFwAbort {
+  u32 image_id;
+  u8  reason;  // NowFwAbortReason
+  u8  rsv0;
+  u16 rsv1;
+}
+```
+
+#### 6.9.3 Firmware transfer state machine (node)
+
+**Initial**: `IDLE`
+
+1. On valid `FW_BEGIN` (from ICM, HMAC ok, role matches, storage ok, version policy ok):
+
+   - Allocate/erase staging slot.
+   - Set `RECEIVING`, `next_needed = 0`, reply `FW_STATUS`.
+
+2. On each `FW_CHUNK`:
+
+   - Verify `image_id`, range, `data_len`, CRC16.
+   - Write chunk at `chunk_index * chunk_size`.
+   - If `chunk_index == next_needed`, increment `next_needed` while contiguous chunk(s) present.
+   - After `window_size` contiguous chunks or timeout, send `FW_STATUS` with current `next_needed`.
+
+3. When `next_needed == total_chunks`:
+
+   - Set `READY`, reply `FW_STATUS`.
+
+4. On `FW_COMMIT`:
+
+   - Verify signature (`sig_algo`) over `sha256`.
+   - Set `VERIFYING` → verify full image digest equals provided `sha256`.
+   - If ok: mark image pending; if `apply_at_boot==1`, set `APPLYING`, perform reboot to bootloader/apply; else set `READY` and reply `FW_STATUS`.
+
+5. On `FW_ABORT`: stop transfers, free staging, set `ERROR` with last_error = mapped abort reason; reply `FW_STATUS`.
+
+**Error mapping**:
+
+- Out-of-space → `SPACE`
+- CRC mismatch on a chunk → `CRC`
+- SHA-256 mismatch → `DIGEST`
+- Role mismatch → `ROLE_MISM`
+- Unsupported downgrade (policy) → `VERSION`
+
+#### 6.9.4 Controller (ICM) sending strategy
+
+- Use `chunk_size` ≤ (MTU - headers - HMAC). Typical: 192..224 bytes.
+- Send bursts of `window_size` chunks, then pause for status or use `next_needed` lag to retransmit missing.
+- Retransmit any chunk `< next_needed` only if node explicitly asks (rare); otherwise send missing chunks starting at `next_needed`.
+- Throttle to ~1–3 ms inter-frame gap to avoid radio starvation.
+
+---
+
+## 7. Topology token and command authorization
+
+Some commands (at minimum `CTRL_RELAY`) are **topology-dependent** and require an app-layer topology token (`NowTopoToken128`). Rules:
+
+- Header MUST set `HAS_TOPO` flag.
+- The included token MUST validate against the node’s current `topo_ver` (e.g., keyed derivation or MAC of `(topo_ver || node_id || role || virt_id)`).
+- On mismatch: reject with `RLY_STATE.result = TOPO_MISM` (if responding) or silently drop.
+
+This binds actuator control to the last authoritative topology.
+
+---
+
+## 8. Timing, retry, and rate limiting
+
+- **Ping cadence** (ICM→nodes): operator-defined, e.g., 1–2 Hz baseline, with exponential backoff on loss.
+- **Report cadence**:
+
+  - SENS: 5–50 Hz bursts filtered to ≤ 10 Hz to ICM (aggregate).
+  - PMS: 1–2 Hz or on change threshold.
+
+- **Relay control**: receivers MUST enforce minimum dwell (e.g., ≥ 50 ms) and maximum rate (e.g., ≤ 10 ops/s) per output; otherwise return `RATE`.
+- **Firmware**: default `window_size` 8..32; chunk pacing 1–3 ms.
+- **Retries**: Controller retries commands up to N times (N=3 recommended) with fresh `seq`. Duplicates MUST be idempotent.
+
+---
+
+## 9. Error handling and observability
+
+**Do NOT** emit unauthenticated error messages. Where a response exists (e.g., `RLY_STATE`, `FW_STATUS`), encode the error in that response.
+
+Nodes SHOULD maintain counters (non-volatile where feasible):
+
+- `auth_fail`, `replay_dropped`, `len_mismatch`, `role_denied`, `topo_mismatch`, `fw_crc_err`, `fw_digest_err`.
+
+Expose via a debug `CONFIG_WRITE` key or a dedicated diagnostic read (future extension).
+
+---
+
+## 10. Versioning and compatibility
+
+- `proto_ver` MUST be `3`. Nodes receiving different versions MUST drop.
+- `topo_ver` is a 16-bit monotonically incrementing counter, managed by ICM.
+- Upgrades MAY alter TLV content but MUST preserve the `TOPO_AUTH` item semantics.
+
+---
+
+## 11. Implementation guidelines (both sides)
+
+### 11.1 Encoding order
+
+For all messages except `PAIR_REQ`, the encoded payload order on the wire is:
+
+```
+NowHeader
+NowAuth128
+[NowTopoToken128 if HAS_TOPO]
+<message-specific payload>
+NowSecTrailer
+```
+
+### 11.2 HMAC key separation
+
+Use distinct derivations for:
+
+- Frame HMAC key
+- TOPO_PUSH TLV HMAC (if used)
+
+This avoids cross-context reuse.
+
+### 11.3 Nonce policy
+
+- 48-bit sender nonce:
+
+  - Monotonic counter (preferred), or
+  - Lower 48 bits of ms epoch (ensure non-decreasing per peer).
+
+- Receiver keeps `(last_nonce, last_seq)` per `(sender_mac)`. Accept if `nonce >= last_nonce - window`.
+
+### 11.4 Memory and MTU budgeting (example)
+
+On `FW_CHUNK`:
+
+- Total per frame ≈ 23 (hdr) + 16 (auth) + 12 (chunk hdr) + N (data) + 18 (sec) = 69 + N.
+- With ESPNOW ~250 B, max safe `N` ≈ 181 B. Choose 160..192 B for headroom (RSSI/fragment).
+
+### 11.5 Persistence
+
+- `PAIR_ACK` device token, `NET_SET_CHAN` pending channel, and `topo_ver` MUST be persisted atomically.
+- `CONFIG_WRITE` keys MUST either be committed atomically or rejected.
+
+---
+
+## 12. State machines (textual)
+
+### 12.1 Pairing (Device ↔ ICM)
+
+**Device**:
+`UNPAIRED` → send `PAIR_REQ` (unencrypted) at 1 Hz with random jitter.
+Wait for `PAIR_ACK` (encrypted/authenticated). On receipt: store token, set channel, add ICM as encrypted peer → `PAIRED`.
+
+**ICM**:
+On `PAIR_REQ`: throttle; operator approval → provision peer → send `PAIR_ACK`.
+
+### 12.2 Normal operation (All)
+
+`PAIRED` → `READY`: accept authenticated commands, emit reports at role cadence, reply `PING`.
+
+**If HMAC failures exceed threshold**: optionally enter `QUARANTINE` (deny non-ICM traffic) until `TIME_SYNC` or operator clears.
+
+### 12.3 Firmware (Device)
+
+`IDLE` → on valid `FW_BEGIN` → `RECEIVING`
+→ when `next_needed == total_chunks` → `READY`
+→ on `FW_COMMIT`:
+
+- `VERIFYING` → if digest/signature ok:
+
+  - If `apply_at_boot==1`: `APPLYING` → reboot; else `READY`.
+
+- else `ERROR`.
+
+`FW_ABORT` at any time: free staging, `ERROR`.
+
+---
+
+## 13. Reference field tables
+
+### 13.1 Header fields
+
+| Field         | Bits | Notes                               |
+| ------------- | ---: | ----------------------------------- |
+| `proto_ver`   |    8 | MUST be `3`                         |
+| `msg_type`    |    8 | §6                                  |
+| `flags`       |   16 | `HAS_TOPO=0x0001`, `URGENT=0x0002`  |
+| `seq`         |   16 | Sender-local sequence               |
+| `topo_ver`    |   16 | From ICM                            |
+| `virt_id`     |    8 | `0xFF` physical, else virtual index |
+| `ts_ms`       |   48 | Lower 48 bits of ms epoch           |
+| `sender_mac`  |   48 | Station MAC                         |
+| `sender_role` |    8 | §1                                  |
+
+### 13.2 Sizes (must match)
+
+- `NowHeader = 23`
+- `NowAuth128 = 16`
+- `NowTopoToken128 = 16`
+- `NowSecTrailer = 18`
+- `NowPairAck = 24`
+- `NowNetSetChan = 4`
+- `NowCtrlRelay = 4`
+- `NowTFPairSample = 8`
+- `NowSensReport = 30`
+- `NowRlyState = 4`
+- `NowPmsStatus = 17`
+- `NowConfigWrite = 8 (+V)`
+- `NowPing = 2`
+- `NowPingReply = 5`
+- `NowTimeSync = 8`
+- `NowFwBegin = 52`
+- `NowFwChunk = 12 (+N)`
+- `NowFwStatus = 16`
+- `NowFwCommit = 8 (+S)`
+- `NowFwAbort = 8`
+
+---
+
+## 14. Conformance checklist (implementers)
+
+**Receiver MUST**:
+
+- [ ] Enforce encrypted peer.
+- [ ] Validate length and packing for `msg_type`.
+- [ ] Validate `proto_ver==3`, `reserved==0`.
+- [ ] Require `NowAuth128` + `NowSecTrailer` for all except `PAIR_REQ`.
+- [ ] Verify HMAC over the defined concatenation.
+- [ ] Enforce nonce replay window.
+- [ ] Enforce role gating for privileged ops.
+- [ ] If `HAS_TOPO`, validate `NowTopoToken128` against current `topo_ver`.
+- [ ] Dispatch to handler; produce signed responses only.
+
+**Sender MUST**:
+
+- [ ] Fill header with correct roles/MACs and time.
+- [ ] Include `NowAuth128` with correct device token.
+- [ ] Set `HAS_TOPO` and provide token where required.
+- [ ] Append `NowSecTrailer` with proper nonce and tag.
+- [ ] Increment `seq` per frame.
+
+**Firmware sender (ICM)**:
+
+- [ ] Choose `chunk_size` to fit MTU budget.
+- [ ] Pace chunks; honor `window_size`.
+- [ ] Use `FW_STATUS.next_needed` as authoritative pointer.
+- [ ] Provide a valid signature in `FW_COMMIT`.
+
+---
+
+## 15. Security considerations
+
+- **DoS**: Rate-limit `PAIR_REQ`, ignore unauthenticated errors, drop HMAC failures silently after a threshold.
+- **Key hygiene**: Separate derivations for frame HMAC, TLV HMAC, and firmware verification keys.
+- **Replay**: 48-bit nonce is sufficient with window enforcement; reset window only after pairing or explicit `TIME_SYNC`.
+
+---
+
+## 16. Interop notes and migration
+
+- Pre-v2 nodes are unsupported. All participants MUST implement this spec end-to-end.
+- If you extend TLV content or add new message types, bump a **capability bitset** in a future `PING_REPLY` extension; keep `proto_ver` stable until an incompatible change is introduced.
+
+---
+
+## Appendix A — Pseudocode (receiver)
+
+```c
+bool handle_frame(const uint8_t* buf, size_t len) {
+  // 1) Minimal header length
+  if (len < sizeof(NowHeader)) return false;
+
+  const NowHeader* h = (const NowHeader*)buf;
+  if (h->proto_ver != 3 || h->reserved != 0) return false;
+
+  // 2) Compute expected lengths
+  size_t off = sizeof(NowHeader);
+  const bool needs_auth = (h->msg_type != NOW_MT_PAIR_REQ);
+  if (needs_auth) {
+    if (len < off + sizeof(NowAuth128) + sizeof(NowSecTrailer)) return false;
+  }
+
+  const NowAuth128* auth = needs_auth ? (const NowAuth128*)(buf + off) : NULL;
+  off += needs_auth ? sizeof(NowAuth128) : 0;
+
+  const bool has_topo = (h->flags & NOW_FLAGS_HAS_TOPO);
+  const NowTopoToken128* topo = NULL;
+  if (has_topo) {
+    if (len < off + sizeof(NowTopoToken128)) return false;
+    topo = (const NowTopoToken128*)(buf + off);
+    off += sizeof(NowTopoToken128);
+  }
+
+  // 3) Payload extent and trailer
+  if (needs_auth) {
+    if (len < sizeof(NowSecTrailer) + off) return false;
+  }
+  size_t payload_len = len - off - (needs_auth ? sizeof(NowSecTrailer) : 0);
+  const uint8_t* payload = buf + off;
+  const NowSecTrailer* sec = needs_auth ? (const NowSecTrailer*)(payload + payload_len) : NULL;
+
+  // 4) Privileged gating
+  if (is_privileged(h->msg_type)) {
+    if (!(h->sender_role == NOW_KIND_ICM && mac_equals(h->sender_mac, ICMMAC))) return false;
+  }
+
+  // 5) HMAC verify
+  if (needs_auth) {
+    if (!verify_hmac(h, auth, topo, payload, payload_len, sec)) return false;
+    if (is_replay(h->sender_mac, sec->nonce)) return false;
+  }
+
+  // 6) Topology token when required
+  if (requires_topo(h->msg_type)) {
+    if (!has_topo || !validate_topo_token(topo, h->topo_ver, h->virt_id)) return false;
+  }
+
+  // 7) Dispatch
+  return dispatch(h, auth, topo, payload, payload_len);
+}
+```
+
+---
+
+## Appendix B — Typical ESPNOW frame sizes (for budgeting)
+
+- **CTRL_RELAY** with topo token:
+
+  - Header (23) + Auth (16) + Topo (16) + Payload (4) + Sec (18) = **77 B**
+
+- **SENS_REPORT**:
+
+  - 23 + 16 + 30 + 18 = **87 B**
+
+- **FW_CHUNK** with 176-byte data:
+
+  - 23 + 16 + 12 + 176 + 18 = **245 B** (fits)
+
+---
+
+## Appendix C — Minimal conformance tests
+
+1. Reject any non-PAIR frame missing HMAC trailer.
+2. Accept `CTRL_RELAY` only with valid topo token bound to current `topo_ver`.
+3. Drop `FW_BEGIN` when `target_role` ≠ self role.
+4. Ensure `NowFwBegin` size parsed as **52 B**; `NowFwStatus` as **16 B**; `NowFwCommit` as **8 B**; `NowFwAbort` as **8 B**.
+5. Verify CRC16 on `FW_CHUNK`; corrupt one byte → node refuses chunk and does not advance `next_needed`.
+6. Verify digest mismatch leads to `FW_STATUS.state=ERROR` with `last_error=DIGEST`.
+7. Sequence wrap: send `seq` near 0xFFFF then wrap; duplicates inside 32-frame window dropped.
+8. Nonce replay: resend previous frame with same nonce → dropped.
+
+---
