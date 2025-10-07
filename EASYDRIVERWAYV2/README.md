@@ -44,60 +44,105 @@ A modular, distributed lighting system for a driveway built on **ESP-NOW**. It c
 
 ```
 src/
-├─ Config/                    # Role & common configuration
-│  ├─ Config_Common.h
-│  ├─ Config_ICM.h
-│  ├─ Config_PMS.h
-│  ├─ Config_REL.h
-│  ├─ Config_REMU.h
-│  ├─ Config_SEMU.h
-│  ├─ Config_SENS.h
-│  ├─ RGBConfig.h
-│  ├─ RTCConfig.h
-│  └─ SetRole.h               # Compile-time role selection hooks
-│
-├─ EspNow/                    # Complete ESP-NOW stack
-│  ├─ EspNowAPI.h             # Public API surface per role
-│  ├─ EspNowStack.h           # Facade/wiring
-│  ├─ codec/                  # Message builders/parsers (control, fw, etc.)
-│  ├─ config/                 # Network & radio config helpers
-│  ├─ core/                   # Core dispatch, routing, callbacks
-│  ├─ fw/                     # Firmware mgmt / OTA message helpers
-│  ├─ roles/                  # Role glue (role_icm.cpp, role_pms.cpp, ...)
-│  ├─ security/               # HMAC, token validation, integrity
-│  ├─ topology/               # TLV store, token, topology encoding/decoding
-│  ├─ transport/              # espnow_radio.cpp (thin radio wrapper)
-│  └─ util/                   # time/byte helpers, common utilities
-│
-├─ Hardware/                  # Per-role hardware pinouts/abstractions
-│  ├─ Hardware_ICM.h
-│  ├─ Hardware_PMS.h
-│  ├─ Hardware_REL.h
-│  ├─ Hardware_REMU.h
-│  ├─ Hardware_SEMU.h
-│  └─ Hardware_SENS.h
-│
-├─ Peripheral/                # Sensor/actuator managers & system services
-│  ├─ ACS781Manager.{h,cpp}   # Current sensor (100A version in PMS)
-│  ├─ BME280Manager.{h,cpp}
-│  ├─ BuzzerManager.{h,cpp}
-│  ├─ DallasTempManager.{h,cpp}# DS18B20
-│  ├─ FanManager.{h,cpp}
-│  ├─ LEDManager.{h,cpp}
-│  ├─ NTPManager.{h,cpp}
-│  ├─ RelayManager.{h,cpp}
-│  ├─ RTCManager.{h,cpp}      # DS3231
-│  ├─ SDManager.{h,cpp}       # Logging to SPIFFS/SD
-│  ├─ SensorManager.{h,cpp}   # TF-LUNA pairs, VEML7700, BME280 integration
-│  ├─ SleepTimer.{h,cpp}
-│  ├─ SwitchManager.{h,cpp}
-│  ├─ TCA9548A.{h,cpp}        # I2C mux, if present
-│  ├─ TFLunaManager.{h,cpp}
-│  ├─ VEML7700Manager.{h,cpp}
-│  └─ WiFiManager.h           # NOTE: interface only; implementation TBD
-│
-├─ Utils.{h,cpp}              # Common helpers (blink params, etc.)
-└─ (no main.cpp yet)          # Application entrypoint is intentionally pending
+├─ Config/                                # Role & common configuration (compile-time)
+│  ├─ Config_Common.h                     # Global constants: feature toggles, timing, sizes
+│  ├─ Config_ICM.h                        # ICM role params (pairing, topology push, UI hooks)
+│  ├─ Config_PMS.h                        # PMS thresholds (volt/current), power groups, policies
+│  ├─ Config_REL.h                        # Relay role defaults: outputs, pulse timing, safety
+│  ├─ Config_REMU.h                       # Relay Emulator virtual-count, mapping policy
+│  ├─ Config_SEMU.h                       # Sensor Emulator virtual-count, thresholds per virtual
+│  ├─ Config_SENS.h                       # Sensor role thresholds (TF-LUNA, day/night, debounce)
+│  ├─ RGBConfig.h                         # RGB status palette & role-to-color mapping
+│  ├─ RTCConfig.h                         # RTC/NTP strategy, tz/format, drift handling
+│  └─ SetRole.h                           # Selects active role; pulls role+hardware headers
+
+├─ EspNow/                                # Complete ESP-NOW stack (protocol, routing, security)
+│  ├─ EspNowAPI.h                         # Public API to send/receive role messages
+│  ├─ EspNowStack.h                       # Facade wiring: init, callbacks, shared types
+│  ├─ codec/                              # Builders/parsers for on-wire messages
+│  │  ├─ codec_build_control.cpp          # Build control frames (relay cmds, pings, params)
+│  │  ├─ codec_build_fw.cpp               # Build FW/OTA frames (staged transfer metadata)
+│  │  ├─ codec_build_reports.cpp          # Build telemetry/health/status report frames
+│  │  └─ codec_header_auth.cpp            # Auth header attach/parse (nonce, token, MAC)
+│  ├─ config/
+│  │  └─ espnow_config.cpp                # Radio config, channel, peer limits, queue sizes
+│  ├─ core/
+│  │  ├─ espnow_core.cpp                  # Bring-up, rx/tx pump, peer table, timers
+│  │  ├─ espnow_router.cpp                # Role-aware routing, fan-out, retry/backoff
+│  │  └─ espnow_scheduler.cpp             # Lightweight scheduler for deferred work
+│  ├─ fw/
+│  │  └─ fw_update.cpp                    # OTA orchestration hooks (state machine, chunks)
+│  ├─ roles/                              # Thin role glue (called by future main)
+│  │  ├─ role_icm.cpp                     # ICM stubs: pairing/topology push entrypoints
+│  │  ├─ role_pms.cpp                     # PMS stubs: source report, power gating handlers
+│  │  ├─ role_rel.cpp                     # Relay stubs: set/read outputs, ack/report
+│  │  ├─ role_remu.cpp                    # Relay Emulator: virtual output addressing
+│  │  ├─ role_semu.cpp                    # Sensor Emulator: virtual sensor reporting
+│  │  └─ role_sens.cpp                    # Sensor stubs: event->command fan-out
+│  ├─ security/
+│  │  └─ security_hmac.cpp                # HMAC calc/verify for tokens & payloads
+│  ├─ topology/
+│  │  ├─ topo_store.cpp                   # In-RAM topology store (nodes, neighbors, deps)
+│  │  ├─ topo_tlv.cpp                     # TLV encode/decode of topology packets
+│  │  └─ topo_token.cpp                   # 32-char token mgmt (binds node config to auth)
+│  ├─ transport/
+│  │  └─ espnow_radio.cpp                 # Thin wrapper around esp-now rx/tx + peer ops
+│  └─ util/
+│     ├─ util_bytes.cpp                   # Endianness, packing/unpacking, hex helpers
+│     └─ util_time.cpp                    # Monotonic time, ms/us helpers, jitter tools
+
+├─ Hardware/                              # Per-role pin mapping & electrical traits
+│  ├─ Hardware_ICM.h                      # ICM pinout: RGB LED, RTC, SD/NAND, buzzer, fan
+│  ├─ Hardware_PMS.h                      # PMS pinout: relays, v/i sense lines, fan, buzz
+│  ├─ Hardware_REL.h                      # Relay board pinout: outputs, status LED, inputs
+│  ├─ Hardware_REMU.h                     # Relay Emulator mapping: shift-reg, bank sizes
+│  ├─ Hardware_SEMU.h                     # Sensor Emulator mapping: bus, mux, debug IO
+│  └─ Hardware_SENS.h                     # Sensor board: TF-LUNA UART/I2C, BME, VEML, DS18B20
+
+├─ NVS/                                   # Non-volatile storage (preferences/config/user data)
+│  ├─ NVSConfig.h                         # NVS namespaces/keys; retention policy comments
+│  ├─ NvsManager.cpp                      # Read/write wrappers, typed getters/setters
+│  └─ NvsManager.h                        # Manager interface; init, schema versioning
+
+├─ Peripheral/                            # Sensor/actuator managers & system services
+│  ├─ 74HC595.cpp                         # Shift-register driver (RGB/status, banks, relays)
+│  ├─ 74HC595.h                           # 74HC595 API: latch/clock/data, batching
+│  ├─ BME280Manager.cpp                   # Pressure/humidity/temp read & sanity checks
+│  ├─ BME280Manager.h                     # Config (I2C addr/oversampling) & API
+│  ├─ BuzzerManager.cpp                   # Non-blocking beeps, patterns, mute window
+│  ├─ BuzzerManager.h                     # Pattern enum + control API
+│  ├─ CoolingManager.cpp                  # Fan PWM policy: ECO/NORMAL/FORCED/AUTO curves
+│  ├─ CoolingManager.h                    # Target RPM/temp linking & hysteresis
+│  ├─ DS18B20U.cpp                        # OneWire temp read, CRC, sensor indexing
+│  ├─ DS18B20U.h                          # Sensor descriptors, discovery/cache
+│  ├─ I2CBusHub.cpp                       # Safe I2C ops, retries, scan, mux cooperation
+│  ├─ I2CBusHub.h                         # Bus abstraction (primary + optional mux ports)
+│  ├─ LogFS.cpp                           # SPIFFS log writer, rotation, size limits
+│  ├─ LogFS.h                             # Logging API (printf-style + binary chunks)
+│  ├─ LogFS_Commands.h                    # Future CLI verbs (tail, ls, rm) for logs
+│  ├─ RelayManager.cpp                    # Drive physical/virtual relays, timed pulses
+│  ├─ RelayManager.h                      # Relay channel model, safety interlocks
+│  ├─ RGBLed.cpp                          # Status LED effects (role/color, blink codes)
+│  ├─ RGBLed.h                            # Minimal RGB LED interface
+│  ├─ RTCManager.cpp                      # DS3231: set/get time, alarms, drift correction
+│  ├─ RTCManager.h                        # RTC API; fallback to NTP when present
+│  ├─ SensorManager.cpp                   # TF-LUNA pairs + VEML + BME fusion; direction
+│  ├─ SensorManager.h                     # Thresholds, debounce, event callbacks
+│  ├─ SleepTimer.cpp                      # Low-power delays; cooperative sleeps
+│  ├─ SleepTimer.h                        # Sleep API used across roles
+│  ├─ SwitchManager.cpp                   # Button/remote edges; tap sequences per role
+│  ├─ SwitchManager.h                     # Binding tap patterns to actions
+│  ├─ TCA9548A.cpp                        # I2C mux bank select + passthrough helpers
+│  ├─ TCA9548A.h                          # Mux API; guard against stuck channels
+│  ├─ TFLunaManager.cpp                   # TF-LUNA distance read; health/timeouts
+│  ├─ TFLunaManager.h                     # LUNA config, averaging, noise filters
+│  ├─ VEML7700Manager.cpp                 # Ambient light read; lux conversion
+│  ├─ VEML7700Manager.h                   # VEML config (gain/integration) & API
+│  └─ WiFiManager.h                       # Interface only (STA/AP/web pending implementation)
+
+├─ Utils.cpp                               # Shared helpers: blink patterns, string/hex, guards
+└─ Utils.h                                 # Declarations & small inline utilities
+
 ```
 
 **Notes**
