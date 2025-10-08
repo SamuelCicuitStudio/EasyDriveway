@@ -83,6 +83,7 @@ enum : uint16_t {
 // ------------------------------------------------------------
 // Header (23 bytes) — packed
 // ------------------------------------------------------------
+#pragma pack(push,1)
 struct NOW_PACKED NowHeader {
   uint8_t  proto_ver;     // NOW_PROTO_VER (0x31)
   uint8_t  msg_type;      // NowMsgType
@@ -95,8 +96,12 @@ struct NOW_PACKED NowHeader {
   uint8_t  sender_mac[6]; // sender MAC (copy for quick policy checks)
   uint8_t  sender_role;   // NOW_ROLE_*
 };
+#pragma pack(pop)
 static_assert(sizeof(NowHeader) == 23, "NowHeader must be 23 bytes");
-
+//enum { NOW_PROTO_VER = 0x31 };
+enum NowFlags : uint16_t {
+  NOW_FLAGS_RELIABLE = 1<<0, NOW_FLAGS_URGENT = 1<<1, NOW_FLAGS_HAS_TOPO = 1<<2
+};
 // ------------------------------------------------------------
 // Tokens (always little-endian byte arrays)
 // ------------------------------------------------------------
