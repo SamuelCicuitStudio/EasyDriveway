@@ -1,12 +1,12 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+
+#include <esp_now.h>   // ensure esp_now_send_status_t is declared
 #include "Frame.h"
 #include "Peers.h"
 #include "TopologyTlv.h"
 #include "DeviceInfo.h"
-
-struct wifi_pkt_rx_ctrl; // forward (ESP-IDF)
 
 namespace espnow {
 
@@ -49,7 +49,7 @@ public:
 
 private:
   static void onSendStatic(const uint8_t* mac_addr, esp_now_send_status_t status);
-  static void onRecvStatic(const uint8_t* mac, const uint8_t* data, int len, void* arg);
+  static void onRecvStatic(const uint8_t* mac, const uint8_t* data, int len);
 
   void onRecv(const uint8_t* mac, const uint8_t* data, int len, int32_t rssi);
   bool sendFrame(const uint8_t* mac, uint8_t type, uint8_t flags, uint16_t corr, const void* payload, uint16_t len);

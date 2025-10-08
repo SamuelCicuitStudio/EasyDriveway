@@ -2,11 +2,13 @@
 #include "IRoleAdapter.h"
 #include "TopologyTlv.h"
 
-// Role macros are expected to be set in your project's src/config/SetRole.*
-#if __has_include("../config/SetRole.h")
-  #include "../config/SetRole.h"
-#elif __has_include("config/SetRole.h")
-  #include "config/SetRole.h"
+// Include role selection macros if present
+#ifdef __has_include
+  #if __has_include("../config/SetRole.h")
+    #include "../config/SetRole.h"
+  #elif __has_include("config/SetRole.h")
+    #include "config/SetRole.h"
+  #endif
 #endif
 
 // Adapters
@@ -39,13 +41,20 @@ IRoleAdapter* createRoleAdapter(){
 }
 
 uint8_t getLocalRoleCode(){
-  #if defined(ROLE_ICM)      ; return RC_ICM;
-  #elif defined(ROLE_PMS)    ; return RC_PMS;
-  #elif defined(ROLE_SENSOR) ; return RC_SENSOR;
-  #elif defined(ROLE_RELAY)  ; return RC_RELAY;
-  #elif defined(ROLE_SENSOR_EMU) ; return RC_SEN_EMU;
-  #elif defined(ROLE_RELAY_EMU)  ; return RC_REL_EMU;
-  #else ; return RC_SENSOR;
+  #if defined(NVS_ROLE_ICM)
+    return RC_ICM;
+  #elif defined(NVS_ROLE_PMS)
+    return RC_PMS;
+  #elif defined(NVS_ROLE_SENS)
+    return RC_SENSOR;
+  #elif defined(NVS_ROLE_RELAY)
+    return RC_RELAY;
+  #elif defined(NVS_ROLE_SEMU)
+    return RC_SEN_EMU;
+  #elif defined(NVS_ROLE_REMU)
+    return RC_REL_EMU;
+  #else
+    return RC_SENSOR;
   #endif
 }
 

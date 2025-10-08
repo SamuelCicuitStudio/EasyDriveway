@@ -9,7 +9,7 @@
 #include <cstring>
 #include <vector>
 
-// Arduino/ESP-IDF includes
+#include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_system.h>
@@ -25,14 +25,8 @@ bool EspNowCore::begin(){
   g_core = this;
   WiFi.mode(WIFI_STA);
   if(esp_now_init() != ESP_OK){ return false; }
-  esp_now_register_send_cb(+[](const uint8_t* mac_addr, esp_now_send_status_t status){
-    EspNowCore::onSendStatic(mac_addr, status);
-  });
-  // Use vendor-specific arg to get RSSI where supported (ESP-IDF 5.x)
-  esp_now_register_recv_cb([](const uint8_t* mac, const uint8_t* data, int len){
-    // rssi not exposed directly here; we'll query station info if possible
-    EspNowCore::onRecvStatic(mac, data, len, nullptr);
-  });
+  esp_now_register_send_cb(&EspNowCore::onSendStatic);
+  esp_now_register_recv_cb(&EspNowCore::onRecvStatic);
   return true;
 }
 
@@ -49,7 +43,8 @@ void EspNowCore::setRoleAdapter(IRoleAdapter* r){
 bool EspNowCore::addPeer(const uint8_t mac[6], bool encrypt, const uint8_t* lmk){
   esp_now_peer_info_t p{};
   std::memcpy(p.peer_addr, mac, 6);
-  p.ifidx = ESP_IF_WIFI_STA;
+  p.channel = 0; // current channel
+  p.ifidx = WIFI_IF_STA;   // correct type for esp-now peer iface
   p.encrypt = encrypt;
   if(encrypt && lmk) std::memcpy(p.lmk, lmk, 16);
   esp_now_del_peer(mac); // idempotent
@@ -85,19 +80,11 @@ bool EspNowCore::broadcast(uint8_t type, const void* payload, uint16_t len, uint
 
 void EspNowCore::onSendStatic(const uint8_t* mac_addr, esp_now_send_status_t status){
   (void)mac_addr; (void)status;
-  // ack is handled by esp-now; no queues here
+  // built-in ACK only; no custom queues
 }
 
-void EspNowCore::onRecvStatic(const uint8_t* mac, const uint8_t* data, int len, void* arg){
-  (void)arg;
-  int32_t rssi = 0;
-  wifi_sta_list_t sta_list{};
-  if(esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK){
-    // Attempt to find RSSI (not guaranteed for ESP-NOW peers)
-    for(int i=0;i<sta_list.num; ++i){
-      if(std::memcmp(sta_list.sta[i].mac, mac, 6)==0){ rssi = sta_list.sta[i].rssi; break; }
-    }
-  }
+void EspNowCore::onRecvStatic(const uint8_t* mac, const uint8_t* data, int len){
+  int32_t rssi = 0; // RSSI not reliably available for ESP-NOW in STA mode
   if(g_core) g_core->onRecv(mac, data, len, rssi);
 }
 
@@ -105,21 +92,20 @@ void EspNowCore::onRecv(const uint8_t* mac, const uint8_t* data, int len, int32_
   if(len < (int)sizeof(EspNowHeader)) return;
   const EspNowHeader* h = reinterpret_cast<const EspNowHeader*>(data);
   EspNowMsg in{ h->type, h->flags, h->corr, data + sizeof(EspNowHeader), (uint16_t)(len - (int)sizeof(EspNowHeader)) };
-  peers_.updateSeen(mac, rssi, (uint32_t)millis()); // millis() available on Arduino
+  peers_.updateSeen(mac, rssi, (uint32_t)millis());
 
   if(tap_) tap_(mac, in);
 
   if(!role_) return;
   uint8_t outBuf[256] = {0};
   EspNowResp out{ outBuf, 0 };
-  bool ok = false;
   if(!isResponse(in.flags)){
-    ok = role_->handleRequest(in, out);
+    bool ok = role_->handleRequest(in, out);
     if(ok && out.out_len){
       sendFrame(mac, in.type, asResponse(in.flags), in.corr, out.out, out.out_len);
     }
   } else {
-    // Response received - could be logged via tap_
+    // Response path: user tap can log
   }
 }
 
@@ -133,14 +119,12 @@ bool EspNowCore::exportLocalTopology(std::vector<uint8_t>& tlvOut) const { retur
 bool EspNowCore::importLocalTopology(const uint8_t* tlv, uint16_t len){ bool ok = espnow::importLocalTopology(tlv,len); if(ok) topo_ = espnow::getLocalTopology(); return ok; }
 
 bool EspNowCore::refreshDeviceInfoFromNvs(){
-  // NOTE: Use existing NVS helpers if available via ServiceRefs->nvs
-  // We avoid inventing keys; fall back to chip ID where needed.
   std::memset(&dev_, 0, sizeof(dev_));
   dev_.role = getLocalRoleCode();
-  // deviceId fallback: chip id
-  uint64_t mac = 0; esp_read_mac(reinterpret_cast<uint8_t*>(&mac), ESP_MAC_WIFI_STA);
-  snprintf(dev_.deviceId, sizeof(dev_.deviceId), "%08X%08X", (unsigned)(mac>>32), (unsigned)(mac & 0xFFFFFFFF));
-  // Leave other fields zero unless NVS is provided; WiFiManager can set later.
+  uint8_t mac6[6]; 
+  esp_read_mac(mac6, ESP_MAC_WIFI_STA);
+  snprintf(dev_.deviceId, sizeof(dev_.deviceId), "%02X%02X%02X%02X%02X%02X",
+           mac6[0], mac6[1], mac6[2], mac6[3], mac6[4], mac6[5]);
   return true;
 }
 
