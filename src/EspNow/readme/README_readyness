@@ -1,0 +1,64 @@
+Here’s a straight “go/no-go” on your **first 7 layers**, based on the code we’ve iterated and the issues we already fixed (RX callback type, HMAC tag signing, SHA-256 constants, NVS secrets).
+
+# Readiness snapshot
+
+| Layer            | File(s)                                                                                             | Status                       | Notes / must-check before moving on                                                                                                                                                                                                                             |     |            |     |                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ---------- | --- | ------------------------------- |
+| **1. util**      | `util_bytes.cpp`                                                                                    | ✅ Ready                     | Has ByteSpan, LE helpers, CRC16. Nothing blocking next steps.                                                                                                                                                                                                   |     |            |     |                                 |
+|                  | `util_time.cpp`                                                                                     | ✅ Ready                     | Millis/epoch helpers OK. If you later switch nonce source to RTC, keep it monotonic.                                                                                                                                                                            |     |            |     |                                 |
+| **2. transport** | `transport/espnow_radio.cpp`                                                                        | ✅ Ready (bring-up)          | RX callback typedef fixed; init + send + peer add/remove OK. Uses dummy PMK unless you pass a real PMK via `radio_add_encrypted_peer(...)`. That’s fine for now—ICM provisioning path will set LMK/PMK.                                                         |     |            |     |                                 |
+| **3. security**  | `security/security_hmac.cpp`                                                                        | ✅ Ready (bring-up complete) | Portable SHA-256/HMAC compiles (K256 typo fixed). `signHmac(...)`, `verifyHmac(...)`, and `setSecuritySecrets(...)` are exported. Uses simple KDF: `HMAC(PMK                                                                                                    |     | LMK, token |     | SALT)`. Good enough to proceed. |
+| **4. codec**     | `codec_header_auth.cpp`, `codec_build_control.cpp`, `codec_build_reports.cpp`, `codec_build_fw.cpp` | ✅ Ready                     | Size guards + builders/parsers present. Keep asserting: `NowFwBegin=52`, `NowFwStatus=16`, `NowFwCommit=8`, `NowFwAbort=8`.                                                                                                                                     |     |            |     |                                 |
+| **5. topology**  | `topo_store.cpp`, `topo_tlv.cpp`, `topo_token.cpp`                                                  | ⚠️ OK to proceed (stubs)     | Presence/policy is there, but **crypto checks are still TODO**: TLV HMAC/signature verification and real `NowTopoToken128` derivation/validation. That’s planned for “next steps” and won’t block basic operation if you accept topo by policy during bring-up. |     |            |     |                                 |
+| **6. core**      | `core/espnow_core.cpp`, `core/espnow_router.cpp`, `core/espnow_scheduler.cpp`                       | ✅ Ready (bring-up)          | **TX frames are now signed** via `signHmac(...)` instead of zero tag. Router enforces size/version/privileged-op gating + calls `verifyHmac(...)`. Scheduler skeleton covers queues and retries.                                                                |     |            |     |                                 |
+| **7. config**    | `config/espnow_config.cpp`                                                                          | ⚠️ One must-do               | Ensure it **loads PMK/LMK/SALT** from NVS and calls `espnow::setSecuritySecrets(pmk,lmk,salt)` during `EspNowStack::begin(...)`. If you already wired this: ✅. If not, add it now (tiny change).                                                               |     |            |     |                                 |
+
+## 3 tiny checks to confirm
+
+1. **Security headers visible to core/router**
+   Make sure `EspNowStack.h` (or a small `security.h`) declares:
+
+   ```cpp
+   namespace espnow {
+     bool signHmac(const NowHeader&, const NowAuth128&, const NowTopoToken128*,
+                   const uint8_t* payload, uint16_t len, NowSecTrailer& out);
+     bool verifyHmac(const NowHeader&, const NowAuth128&, const NowTopoToken128*,
+                     const uint8_t* payload, uint16_t len, const NowSecTrailer&);
+     void setSecuritySecrets(const uint8_t pmk[16], const uint8_t lmk[16], const uint8_t salt[16]);
+   }
+   ```
+
+   (We added this earlier—just confirm includes are consistent.)
+
+2. **Core actually calls `signHmac(...)`**
+   In `encode_frame(...)` (core), after filling `s.nonce`, you should see:
+
+   ```cpp
+   const uint8_t* p_payload = out + sizeof(NowHeader) + sizeof(NowAuth128);
+   const size_t   plen      = (size_t)(p - p_payload); // [topo? + payload]
+   if (!signHmac(h, a, include_topo ? topo_opt : nullptr, p_payload, (uint16_t)plen, s)) return 0;
+   ```
+
+   (The old “zero tag” is gone.)
+
+3. **Config injects secrets once**
+   In `espnow_config.cpp` (or wherever you finalize settings):
+
+   ```cpp
+   uint8_t pmk[16], lmk[16], salt[16];
+   nvsGetBlob(NVS_KEY_PMK16, pmk, 16);
+   nvsGetBlob(NVS_KEY_LMK16, lmk, 16);
+   nvsGetBlob(NVS_KEY_SALT16, salt, 16);
+   espnow::setSecuritySecrets(pmk, lmk, salt);
+   ```
+
+   This ensures both `signHmac/verifyHmac` use real fleet keys.
+
+---
+
+## Verdict
+
+- **You’re clear to start the next steps.**
+- The only “yellow” is **topology crypto** (expected—it’s scheduled next) and making sure **config calls `setSecuritySecrets`** (a 3-line glue step if not already in).
+
+If you want, I can drop in the **topology keying** next (derive/validate `NowTopoToken128` bound to `(topo_ver, role, virt_id, mac)` and TLV HMAC verification), and wire a minimal **pairing/provision** helper that actually calls `radio_add_encrypted_peer(...)` with your LMK at approval time.

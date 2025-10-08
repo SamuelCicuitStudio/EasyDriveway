@@ -1,0 +1,279 @@
+# EasyDriveway ESPNOW Stack (v3-T) — Explained & Build Order
+
+## 0) What this stack is (and isn’t)
+
+- **What it is:** A lean, deterministic ESPNOW stack for ESP32-S3 where **every frame carries a 128-bit Device Token** (admission). Topology-bound ops also carry a **128-bit Topology Token** (authorization). No HMAC; wire integrity is “best-effort” (bounds checks + a few CRCs in specific payloads).
+- **Why:** Smaller code, less CPU, fewer moving parts—great for constrained nodes.
+- **What it’s not:** It does **not** provide confidentiality or cryptographic integrity. If you need that, add HMAC back or encrypt the ESPNOW link.
+
+**Roles in your fleet (all six are first-class):**
+**ICM**, **PMS**, **REL**, **SENS**, **REMU** _(relay emulator, mandatory)_, **SEMU** _(sensor emulator, mandatory)_.
+
+---
+
+## 1) The big picture
+
+1. **Core is role-agnostic.** Headers, tokens, queues, and routing are common.
+2. **Tokens drive policy.** **Device Token** = “who” may enter; **Topology Token** = “what” a sender may do in _this_ topology.
+3. **Determinism & footprint.** Fixed header (23B), fixed token blocks, small payload catalog.
+4. **Observability.** Counters, drop reasons, predictable retries/backoff.
+
+---
+
+## 2) On-wire format (what every frame looks like)
+
+- **Header (23B):** `proto_ver`, `msg_type`, `flags` (`RELIABLE | URGENT | HAS_TOPO`), `seq`, `topo_ver`, `virt_id`, timestamp (48-bit ms, diag only), `sender_mac`, `sender_role`.
+- **Tokens:**
+
+  - **Device Token (16B)** — **always present**.
+  - **Topology Token (16B)** — **present iff** `HAS_TOPO` (topology-bound operations).
+
+- **Payloads:** Small, packed, little-endian structs; size always checked.
+
+---
+
+## 3) Receiver pipeline (how frames are admitted)
+
+1. Version/type/role sanity.
+2. Duplicate window check (`seq` per MAC).
+3. **Device Token** equals stored record for that MAC+role.
+4. If `HAS_TOPO`: **Topology Token** must match device’s current topology token.
+5. Privilege gates (e.g., ICM-only messages).
+6. Virtual routing via `virt_id` (for **REMU/SEMU** instances).
+7. Dispatch to the **Router**, which hands off to the correct **Role Adapter**.
+
+---
+
+## 4) Pairing & provisioning models
+
+- **Out-of-band:** Manufacture time writes Device Token; ICM has the table.
+- **PAIR_REQ / PAIR_ACK:** Node asks to join; **ICM** decides, persists the peer, replies with `PAIR_ACK` (plus later `TOPO_PUSH` if you rotate the topology). Tokens are plaintext in v3-T—ensure commissioning is in a trusted environment.
+
+---
+
+## 5) Topology management
+
+- **ICM owns `topo_ver`.** Increment when topology changes; distribute via `TOPO_PUSH` (can also rotate the topology token).
+- **Topology-bound ops** (e.g., relay control, config writes) must carry `HAS_TOPO` + valid Topology Token. Receivers drop if their `topo_ver` differs.
+
+---
+
+## 6) Scheduling & reliability
+
+- **Queues:** urgent + normal.
+- **Best-effort reliable:** When `RELIABLE` is set, expect a reply (type-specific), retry on timeout: default 3 tries, ~40 ms timeout, +20 ms backoff.
+- **RX window:** 16-entry mask per MAC to reject dupes.
+
+---
+
+## 7) Router & dispatch rules
+
+- **Addressing:** Per-peer state keyed by `sender_mac`.
+- **Privilege gates:** ICM-only (`TOPO_PUSH`, `NET_SET_CHAN`, `TIME_SYNC`, all `FW_*`). Topology-bound (`CTRL_RELAY`, `CONFIG_WRITE`). Always-allowed reporters (`SENS_REPORT`, `PMS_STATUS`) from the right roles.
+- **Virtual devices:** **REMU/SEMU** selected by `virt_id`; `0xFF` means “physical instance”.
+
+---
+
+## 8) Firmware update (CRC-only)
+
+- **Stages:** `FW_BEGIN` → `FW_CHUNK` → `FW_COMMIT` / `FW_ABORT`; statuses via `FW_STATUS`.
+- **Integrity:** CRC32 + image validation; staged to a separate slot; applied on reboot.
+
+---
+
+## 9) Config writes
+
+- Payload `NowConfigWrite { key[6], len + inline bytes… }`
+- Requires `HAS_TOPO`. Each role adapter validates limits and persists on success (NV).
+
+---
+
+## 10) Time, channel, and heartbeat
+
+- **TIME_SYNC:** ICM is authority; others accept and set epoch.
+- **NET_SET_CHAN:** ICM hints Wi-Fi channel; nodes may apply now or later.
+- **PING / PING_REPLY:** Liveness + tiny status (temp/uptime/state bits).
+
+---
+
+## 11) Role adapters (all **mandatory** in your project)
+
+- **ICM** — control plane: pairing (`PAIR_REQ/ACK`), time (`TIME_SYNC`), network (`NET_SET_CHAN`), topology (`TOPO_PUSH`), firmware coordinator.
+- **PMS** — power/thermal telemetry; `PMS_STATUS`, cooling control via config.
+- **REL** — relay control; `CTRL_RELAY` and `RLY_STATE`.
+- **SENS** — physical sensors; `SENS_REPORT`.
+- **REMU (mandatory)** — _relay emulator_: same API as REL, multiplexed via `virt_id` over one MAC.
+- **SEMU (mandatory)** — _sensor emulator_: same API as SENS, multiplexed via `virt_id` and produces deterministic test data.
+
+---
+
+## 12) NV storage layout (what lives in flash)
+
+- Device Token (16B), Topology Token (16B), `topo_ver` (2B), optional pinned ICM MAC (6B), role config keys/values, FW staging metadata. Wear-aware writes.
+
+---
+
+## 13) Diagnostics
+
+- **Drop counters:** version/type/role/seq/token_dev/token_topo/gate/len/fw_state.
+- **Telemetry:** rx/tx/tx_retry/tx_fail/uptime, last-seen per peer, RSSI if available.
+- **Logging:** Level-gated; hex dumps only in dev builds.
+
+---
+
+## 14) Internal surfaces (how modules talk)
+
+- **Radio:** init, add/remove peer, send, optional per-peer RSSI.
+- **Codec:** pack/unpack header, tokens, payloads.
+- **Router:** RX entry point, enqueue TX, bind adapters, set policy.
+- **Scheduler:** tick, push/pop, on-ack.
+- **Pair/Topo/Config/FW:** role-independent helpers invoked by adapters.
+
+---
+
+## 15) Profiles & migration
+
+- Profiles: **MINIMAL**, **FIELD**, **LAB** (varying features/verbosity).
+- Migration (v2H→v3-T): remove HMAC trailer & calls; always include Device Token; include Topology Token only when `HAS_TOPO`; keep catalogs and flows; rely on CRC for FW.
+
+---
+
+## 16) Example flows
+
+- **ICM→REL toggle:** `CTRL_RELAY` (HAS_TOPO|RELIABLE|URGENT) → REL validates → actuates → `RLY_STATE` back.
+- **SENS→ICM report:** periodic `SENS_REPORT` (Device Token only).
+- **FW session:** `FW_BEGIN` → chunks → `FW_COMMIT` → reboot.
+
+---
+
+## 17) Minimal compliance checklist
+
+- Always include **Device Token**.
+- Include **Topology Token** for topology-bound ops + set `HAS_TOPO`.
+- Enforce **ICM-only** gates.
+- Maintain per-peer `seq` window.
+- Validate payload sizes/types.
+- Keep counters for drops & reasons.
+- Persist tokens + `topo_ver`.
+- When `RELIABLE`, retry with bounded backoff.
+- Implement **REMU**/**SEMU** with `virt_id` (mandatory).
+
+---
+
+# The Build Plan — exact order to implement/generate files
+
+Implement **from common → transport → policy → roles**. Each step lists responsibilities, acceptance, and what to generate.
+
+### 1) **`EspNowAPI.h` (common types & catalog)**
+
+- **What:** `NowHeader`, token structs, message IDs, payload structs, constants (MTU, flags).
+- **Why first:** Everything else depends on the catalog and sizes.
+- **Acceptance:** `static_assert` sizes; MTU math leaves ≥ ~50 B headroom for worst payload.
+
+### 2) **`EspNowCompat.h` (platform glue)**
+
+- **What:** Arduino/IDF includes, S3 compile-time guards, MAC helpers (`now_get_mac_sta`, `now_same_mac`, `now_copy_mac`), safe timing (`now_millis()`), channel validity helpers.
+- **Acceptance:** Builds under PlatformIO for ESP32-S3; asserts PSRAM/SDK options you require.
+
+### 3) **`EspNowPeers.{h,cpp}` (peer DB + NVS)**
+
+- **What:** NVS-backed table `{ mac, role, name, token128, enabled, topoVersionHint }`; CRUD; `setChannel/getChannel`; mirror add/remove to ESPNOW radio on toggles.
+- **Acceptance:** Admission policy = _known MAC & enabled & token match_. NV survives reboot.
+
+### 4) **`EspNowQueue.{h,cpp}` (RTOS queues & acks)**
+
+- **What:** TX queue entries `{ bytes, len, retries, deadline, requireAck }`; RX queue entries `{ bytes + meta (RSSI?) }`; small exponential backoff schedule.
+- **Acceptance:** RX floods don’t starve TX; retries capped; deadlines honored.
+
+### 5) **`EspNowCodec.{h,cpp}` (pack/unpack)**
+
+- **What:** Compose `Header → DeviceToken → [TopoToken] → Payload`; Parse with length checks; no HMAC.
+- **Acceptance:** Enforces MTU (≤ ESPNOW 250B); rejects malformed frames; token presence rules enforced.
+
+### 6) **`EspNowStack.{h,cpp}` (radio lifecycle + engine)**
+
+- **What:** Wi-Fi init (STA, fixed channel, optional LR), `esp_now_init`, register callbacks; RX path **does not parse**—it enqueues; TX path uses retries+ack timers.
+- **Acceptance:** Clean begin/end; acks tracked; starvation avoided.
+
+### 7) **`EspNowRouter.{h,cpp}`**
+
+- **What:** Registry of adapters (`registerAdapter(role, ptr)`), role validation, `virt_id` demux (for **REMU/SEMU**), dispatch with policy gates; returns reply (if any) to stack.
+- **Acceptance:** Unknown op → 1 log only; known ops always reach adapter.
+
+### 8) **`EspNowHB.{h,cpp}` (heartbeats + time sync)**
+
+- **What:** Periodic `PING`; if time authority and RTC valid → `TIME_SYNC`. Maintains last-seen/RSSI, missed counts, one-time “link lost” logs.
+- **Acceptance:** No spurious loss logs; time sync only when authority.
+
+### 9) **Role adapters (all six are mandatory)**
+
+9.1) **`RoleAdapters/IRoleAdapter.h`**
+
+- **Contract:** `role()`, `handle(in→out)`, `tick()`.
+
+  9.2) **`RoleAdapters/Adapter_ICM.{h,cpp}`**
+
+- **Ops:** `PAIR_REQ/ACK`, `NET_SET_CHAN`, `TOPO_PUSH` (if you include), ignore inbound `TIME_SYNC`.
+- **Logic:** Gate by provisioning; `Peers.addPeer(...)`; `Peers.setChannel(...)`; blink/buzz on success.
+- **Acceptance:** Pairs are durable; channel persisted and echoed.
+
+  9.3) **`RoleAdapters/Adapter_REL.{h,cpp}`**
+
+- **Ops:** `CTRL_RELAY`, `RLY_STATE`.
+- **Logic:** Bounds check, non-blocking pulse scheduling, ACK with state mask + `topo_ver`.
+- **Acceptance:** Toggling any relay reflects in hardware and ACK mask.
+
+  9.4) **`RoleAdapters/Adapter_SENS.{h,cpp}`**
+
+- **Ops:** `SENS_REPORT` (periodic/polled), `PING` reply with mini-status.
+- **Logic:** Gather TF-Luna/VEML7700/BME280/DS18B20; keep payload ≤ 200 B; attach time only for diagnostics.
+- **Acceptance:** FPS respected; payload under MTU.
+
+  9.5) **`RoleAdapters/Adapter_PMS.{h,cpp}`**
+
+- **Ops:** `PMS_STATUS`, `COOL_SET` via `CONFIG_WRITE`.
+- **Logic:** Aggregate rails, currents, temps, faults → `NowPmsStatus`; map `COOL_SET{pct}` to `CoolingManager`.
+- **Acceptance:** Telemetry matches local sensors; cooling setpoint applies immediately.
+
+  9.6) **`RoleAdapters/Adapter_REMU.{h,cpp}`** _(mandatory)_
+
+- **Ops:** Mirror **REL** ops but virtualized across **N** logical relays selected by `virt_id`.
+- **Logic:** Keep an internal bitmap; same `RLY_STATE` replies; enforce `HAS_TOPO`.
+- **Acceptance:** Each `virt_id` behaves like an independent relay bank.
+
+  9.7) **`RoleAdapters/Adapter_SEMU.{h,cpp}`** _(mandatory)_
+
+- **Ops:** Mirror **SENS** (`SENS_REPORT`, `PING`) with **deterministic synthetic data**; virtualized by `virt_id`.
+- **Acceptance:** Deterministic, small payload; configurable cadence for bring-up.
+
+> If you prefer, split **cooling** logic into `Adapter_COOL` later; not required to bring up the stack.
+
+### 10) **(Optional) FW subsystem files (`Fw*.{h,cpp}`)**
+
+- Only after the transport and adapters are stable.
+
+### 11) **(Optional) Config helpers (`Cfg*.{h,cpp}`)**
+
+- Centralize role config persistence/validation.
+
+---
+
+## 18) Testing plan (quick, pragmatic)
+
+- **Unit:** codec sizes/packing; token equality; window logic.
+- **Integration:** router gates; admission policy; retries; acks; **REMU/SEMU** multi-instance routing via `virt_id`.
+- **System:** pairing flows; channel rotation; time sync; FW push with induced loss.
+- **Fault-injection:** bad tokens; wrong `topo_ver`; duplicate bursts; oversize payloads.
+
+---
+
+## 19) Final notes
+
+- Keep **REMU**/**SEMU** in every build—they’re invaluable for bench testing and CI.
+- If you later need integrity/replay protection, v3-T lets you bolt HMAC back on as a strictly additive profile without touching adapters.
+
+---
+
+### TL;DR — one-line order
+
+**API → Compat → Peers → Queue → Codec → Stack → Router → Heartbeat → Adapters (ICM,PMS,REL,SENS,REMU,SEMU) → FW/Config (optional)**
