@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <esp_now.h>   // ensure esp_now_send_status_t is declared
+#include <esp_now.h>
 #include "Frame.h"
 #include "Peers.h"
 #include "TopologyTlv.h"
@@ -15,36 +15,30 @@ struct ServiceRefs;
 
 class EspNowCore {
 public:
-  bool begin();   // WiFi.mode(WIFI_STA), esp_now_init, register cbs
+  bool begin();
 
   void setServices(const ServiceRefs* s);
   void setRoleAdapter(IRoleAdapter* r);
 
-  // ========= Sending =========
   bool unicast(const uint8_t mac[6], uint8_t type, const void* payload, uint16_t len, uint16_t corr=0);
   bool broadcast(uint8_t type, const void* payload, uint16_t len, uint16_t corr=0);
 
-  // ========= Peers =========
   bool addPeer(const uint8_t mac[6], bool encrypt=false, const uint8_t* lmk=nullptr);
   bool removePeer(const uint8_t mac[6]);
   const Peers& peers() const { return peers_; }
 
-  // ========= Topology =========
   bool pushTopology(const uint8_t mac[6], const void* tlv, uint16_t len);
   void setLocalTopology(const Topology& t);
   const Topology& getLocalTopology() const;
   bool exportLocalTopology(std::vector<uint8_t>& tlvOut) const;
   bool importLocalTopology(const uint8_t* tlv, uint16_t len);
 
-  // ========= Device Info =========
   const DeviceInfo& getLocalDeviceInfo() const { return dev_; }
   bool refreshDeviceInfoFromNvs();
 
-  // ========= Logging tap =========
   using RxTap = void(*)(const uint8_t mac[6], const EspNowMsg&);
   void setRxTap(RxTap t){ tap_ = t; }
 
-  // Singleton-ish access for adapters needing topology
   static EspNowCore* instance();
 
 private:

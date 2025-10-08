@@ -43,15 +43,12 @@ void EspNowCore::setRoleAdapter(IRoleAdapter* r){
 bool EspNowCore::addPeer(const uint8_t mac[6], bool encrypt, const uint8_t* lmk){
   esp_now_peer_info_t p{};
   std::memcpy(p.peer_addr, mac, 6);
-  p.channel = 0; // current channel
-  p.ifidx = WIFI_IF_STA;   // correct type for esp-now peer iface
+  p.channel = 0;
+  p.ifidx = WIFI_IF_STA;
   p.encrypt = encrypt;
   if(encrypt && lmk) std::memcpy(p.lmk, lmk, 16);
-  esp_now_del_peer(mac); // idempotent
-  if(esp_now_add_peer(&p) == ESP_OK){
-    peers_.add(mac, 0);
-    return true;
-  }
+  esp_now_del_peer(mac);
+  if(esp_now_add_peer(&p) == ESP_OK){ peers_.add(mac, 0); return true; }
   return false;
 }
 
@@ -80,11 +77,10 @@ bool EspNowCore::broadcast(uint8_t type, const void* payload, uint16_t len, uint
 
 void EspNowCore::onSendStatic(const uint8_t* mac_addr, esp_now_send_status_t status){
   (void)mac_addr; (void)status;
-  // built-in ACK only; no custom queues
 }
 
 void EspNowCore::onRecvStatic(const uint8_t* mac, const uint8_t* data, int len){
-  int32_t rssi = 0; // RSSI not reliably available for ESP-NOW in STA mode
+  int32_t rssi = 0;
   if(g_core) g_core->onRecv(mac, data, len, rssi);
 }
 
@@ -95,17 +91,15 @@ void EspNowCore::onRecv(const uint8_t* mac, const uint8_t* data, int len, int32_
   peers_.updateSeen(mac, rssi, (uint32_t)millis());
 
   if(tap_) tap_(mac, in);
-
   if(!role_) return;
+
   uint8_t outBuf[256] = {0};
   EspNowResp out{ outBuf, 0 };
-  if(!isResponse(in.flags)){
+  if((in.flags & 0x01)==0){
     bool ok = role_->handleRequest(in, out);
     if(ok && out.out_len){
-      sendFrame(mac, in.type, asResponse(in.flags), in.corr, out.out, out.out_len);
+      sendFrame(mac, in.type, (uint8_t)(in.flags|0x01), in.corr, out.out, out.out_len);
     }
-  } else {
-    // Response path: user tap can log
   }
 }
 
@@ -121,8 +115,7 @@ bool EspNowCore::importLocalTopology(const uint8_t* tlv, uint16_t len){ bool ok 
 bool EspNowCore::refreshDeviceInfoFromNvs(){
   std::memset(&dev_, 0, sizeof(dev_));
   dev_.role = getLocalRoleCode();
-  uint8_t mac6[6]; 
-  esp_read_mac(mac6, ESP_MAC_WIFI_STA);
+  uint8_t mac6[6]; esp_read_mac(mac6, ESP_MAC_WIFI_STA);
   snprintf(dev_.deviceId, sizeof(dev_.deviceId), "%02X%02X%02X%02X%02X%02X",
            mac6[0], mac6[1], mac6[2], mac6[3], mac6[4], mac6[5]);
   return true;
