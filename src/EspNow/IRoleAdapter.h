@@ -1,43 +1,15 @@
 #pragma once
-/**
- * IRoleAdapter — contract for role-specific handlers (stable ABI).
- *
- * Notes:
- *  - No stack internals leak here.
- *  - Router will pass source MAC for policy/telemetry; adapters may ignore it.
- */
-
-#include <stdint.h>
-
-// Be tolerant to different include layouts (root vs "EspNow/" folder)
-#if __has_include("EspNowAPI.h")
-  #include "EspNowAPI.h"
-#elif __has_include("EspNowAPI.h")
-  #include "EspNow/EspNowAPI.h"
-#else
-  #error "EspNowAPI.h not found. Adjust include path."
-#endif
-
-#if __has_include("EspNowCodec.h")
-  #include "EspNowCodec.h"
-#elif __has_include("EspNow/EspNowCodec.h")
-  #include "EspNow/EspNowCodec.h"
-#else
-  #error "EspNowCodec.h not found. Adjust include path."
-#endif
+#include "Frame.h"
+#include "ServiceRefs.h"
 
 namespace espnow {
 
-struct IRoleAdapter {
+class IRoleAdapter {
+public:
   virtual ~IRoleAdapter() = default;
-  virtual uint8_t role() const = 0;
-
-  // Handle one incoming, optionally produce a reply in 'out'.
-  // Return true if 'out' is populated and should be sent.
-  virtual bool handle(const uint8_t srcMac[6], const Packet& in, Packet& out) = 0;
-
-  // Periodic housekeeping (timers, pulses, etc.).
-  virtual void tick() {}
+  virtual void mount(const ServiceRefs* s) = 0;
+  virtual bool handleRequest(const EspNowMsg& in, EspNowResp& out) = 0;
+  virtual void onTopologyPushed(const uint8_t* tlv, uint16_t len) {}
 };
 
 } // namespace espnow
