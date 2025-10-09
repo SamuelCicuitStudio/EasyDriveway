@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ICM · Topology</title>
+    <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="css/topology.css" />
     <link rel="icon" href="/favicon.ico" />
   </head>
@@ -35,6 +36,16 @@
               />
             </svg>
           </div>
+        <div class="grow"></div>
+        <label class="input" aria-label="Filter peers">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z" fill="currentColor"/></svg>
+          <input id="peerFilter" type="text" placeholder="Filter peers…" />
+        </label>
+        <div class="row right gap-2">
+          <button id="refreshPairs" class="btn ghost" title="Reload paired devices">Refresh</button>
+          <button id="logoutBtnLegacy" class="btn danger" title="Log out">Logout</button>
+        </div>
+        
           <div class="title">Interface Control Module</div>
         </div>
         <nav class="nav">
@@ -254,7 +265,7 @@
               <button id="btnRefreshPeers" class="btn">Refresh</button>
             </div>
             <div class="peers scrollable" id="peersScroll">
-              <table class="tbl" id="peersTbl">
+              <table class="table" class="tbl" id="peersTbl">
                 <thead>
                   <tr>
                     <th>Type</th>

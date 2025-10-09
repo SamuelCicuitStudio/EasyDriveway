@@ -20,6 +20,7 @@
  *  - At least one POWER peer must exist (but POWER is not part of the chain).
  *
  * Seed profile (v2):
+ *  - Adjusted for demo: 16 relays, 8 sensors, 4 PMS (mapped as 'parking')
  *  - Power:    1
  *  - Sensors:  5
  *  - Entrance: 1
@@ -68,15 +69,16 @@
     // Power (1)
     seed.push({ type: "power", mac: makeMacFromIndex(idx++), online: true });
 
-    // Sensors (5)
-    for (let i = 0; i < 5; i++)
+    // Sensors (8)
+    for (let i = 0; i < 8; i++)
       seed.push({ type: "sensor", mac: makeMacFromIndex(idx++), online: true });
 
     // Entrance (1)
     seed.push({ type: "entrance", mac: makeMacFromIndex(idx++), online: true });
 
-    // Parking (1)
-    seed.push({ type: "parking", mac: makeMacFromIndex(idx++), online: true });
+    // Parking (4)
+    for (let i = 0; i < 4; i++)
+      seed.push({ type: "parking", mac: makeMacFromIndex(idx++), online: true });
 
     // Relays (16)
     for (let i = 0; i < 16; i++)

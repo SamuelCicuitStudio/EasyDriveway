@@ -27,7 +27,7 @@
   --cRelay: #7a56f0;
   --cSens: #b8b02e;
   --bg1: #0e1320;
-  --bg2: #0b1323;
+  --bg2: #0b1323; /* preserved */
   --pane: #141a2b;
   --line: #1f2940;
   --text: #e8eef7;
@@ -184,7 +184,7 @@ body {
 .grid.grid-3 {
   display: grid;
   grid-template-columns: 1fr 1.2fr 1fr;
-  grid-template-rows: var(--topRowH) var(--bottomRowH); /* FIXED heights */
+  grid-template-rows: minmax(260px, 1fr) minmax(220px, 1fr); /* responsive rows */
   grid-template-areas:
     "palette chain selected"
     "peers   chain pair";
@@ -333,6 +333,7 @@ input[type="text"] {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -476,6 +477,7 @@ input[type="text"] {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .tbl {
   width: 100%;
@@ -869,7 +871,8 @@ body::before {
 .card.card-selected #selNone {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto; /* << key */
+  overflow: auto;
+  overscroll-behavior: contain; /* << key */
   padding-right: 6px; /* room for scrollbar */
 }
 
@@ -933,4 +936,35 @@ body::before {
 }
 .kv.state-danger {
   border-color: #7a0014;
+}
+
+@media (max-width: 1280px) {
+  .grid.grid-3 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "palette chain"
+      "peers   chain"
+      "selected pair";
+    grid-auto-rows: minmax(220px, 1fr);
+  }
+}
+@media (max-width: 860px) {
+  .grid.grid-3 {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "palette"
+      "peers"
+      "chain"
+      "selected"
+      "pair";
+  }
+}
+
+button:focus-visible,
+a:focus-visible,
+.pill:focus-visible,
+.brick:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(100, 181, 255, 0.35);
+  border-radius: 10px;
 }

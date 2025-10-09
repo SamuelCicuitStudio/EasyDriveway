@@ -1177,3 +1177,31 @@
     }
   });
 })();
+
+
+// ---- UX: lightweight table filter for peers ----
+(function() {
+  const filter = document.getElementById("peerFilter");
+  const peerSearch = document.getElementById("peerSearch");
+  if (!filter || !peerSearch) return;
+  function mirror() {
+    if (peerSearch.value !== filter.value) {
+      peerSearch.value = filter.value;
+      const ev = new Event("input", { bubbles: true });
+      peerSearch.dispatchEvent(ev);
+    }
+  }
+  filter.addEventListener("input", mirror);
+  // initialize mirror on load
+  setTimeout(mirror, 0);
+})();
+
+// ---- UX: bind topbar refresh to existing reload logic ----
+(function() {
+  const btn = document.getElementById("refreshPairs");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (typeof reloadPairs === "function") reloadPairs();
+    else if (typeof loadPairs === "function") loadPairs();
+  });
+})();
