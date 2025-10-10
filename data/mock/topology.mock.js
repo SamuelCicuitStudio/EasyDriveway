@@ -19,14 +19,10 @@
  * Special rule mirrored from real UI:
  *  - At least one POWER peer must exist (but POWER is not part of the chain).
  *
- * Seed profile (v2):
- *  - Adjusted for demo: 16 relays, 8 sensors, 4 PMS (mapped as 'parking')
- *  - Power:    1
- *  - Sensors:  5
- *  - Entrance: 1
- *  - Parking:  1
- *  - Relays:   16
+ * v3 changes:
+ *  - Seed contains: 1 power, 12 sensors, 16 relays.
  */
+
 (function () {
   const realFetch = window.fetch ? window.fetch.bind(window) : null;
 
@@ -35,7 +31,22 @@
   const LS_LINKS = "icm_mock_links";
   const LS_SEQ = "icm_mock_seq";
   const LS_VER = "icm_mock_version";
-  const VERSION = "v2";
+  const VERSION = "v5";
+
+  // ----- Type helpers -----
+  function normalizeTypeIn(type) {
+    const t = String(type || "")
+      .toLowerCase()
+      .trim();
+    if (t === "sensor" || t === "relay" || t === "power") return t;
+    // Unknowns are passed through, but you likely only use the three above.
+    return t;
+  }
+  function normalizeTypeUp(type) {
+    // Uppercase form for topology links
+    const t = normalizeTypeIn(type);
+    return String(t || "").toUpperCase();
+  }
 
   // ----- MAC helpers -----
   const macNormalize12 = (s) =>
@@ -61,7 +72,7 @@
     return `${b(0x02)}:${b(0x00)}:${b(a2)}:${b(a3)}:${b(a4)}:${b(a5)}`;
   };
 
-  // ----- Seed peers -----
+  // ----- Seed peers (v3) -----
   function seedPeers() {
     const seed = [];
     let idx = 1;
@@ -69,39 +80,109 @@
     // Power (1)
     seed.push({ type: "power", mac: makeMacFromIndex(idx++), online: true });
 
-    // Sensors (8)
-    for (let i = 0; i < 8; i++)
+    // Sensors (12) — unified sensor type
+    for (let i = 0; i < 12; i++) {
       seed.push({ type: "sensor", mac: makeMacFromIndex(idx++), online: true });
-
-    // Entrance (1)
-    seed.push({ type: "entrance", mac: makeMacFromIndex(idx++), online: true });
-
-    // Parking (4)
-    for (let i = 0; i < 4; i++)
-      seed.push({ type: "parking", mac: makeMacFromIndex(idx++), online: true });
+    }
 
     // Relays (16)
-    for (let i = 0; i < 16; i++)
+    for (let i = 0; i < 16; i++) {
       seed.push({ type: "relay", mac: makeMacFromIndex(idx++), online: true });
+    }
+
+    // ✨ NEW: Emulators — 2x SEMUX + 2x REMUX
+    seed.push({ type: "semux", mac: makeMacFromIndex(idx++), online: true });
+    seed.push({ type: "semux", mac: makeMacFromIndex(idx++), online: true });
+    seed.push({ type: "remux", mac: makeMacFromIndex(idx++), online: true });
+    seed.push({ type: "remux", mac: makeMacFromIndex(idx++), online: true });
 
     localStorage.setItem(LS_PEERS, JSON.stringify(seed));
     localStorage.setItem(LS_VER, VERSION);
+  }
+
+  // ----- Migration helpers -----
+  function migratePeers(peers) {
+    // Map any legacy entrance/parking to sensor
+    let changed = false;
+    const out = (peers || []).map((p) => {
+      const mapped = { ...p, type: normalizeTypeIn(p.type) };
+      if (mapped.type !== p.type) changed = true;
+      // keep mac form flexible: store 12-chars or colon form — we'll re-format when reading
+      return mapped;
+    });
+    if (changed) localStorage.setItem(LS_PEERS, JSON.stringify(out));
+    return out;
+  }
+
+  function migrateLinks(linksObj) {
+    if (!linksObj || !Array.isArray(linksObj.links))
+      return linksObj || { links: [] };
+    let changed = false;
+    const mapLink = (l) => {
+      const mapped = {
+        ...l,
+        type: normalizeTypeUp(l.type),
+        mac: macFormatColon(l.mac || ""),
+      };
+      if (l.prev) {
+        mapped.prev = {
+          type: normalizeTypeUp(l.prev.type),
+          mac: macFormatColon(l.prev.mac || ""),
+        };
+      }
+      if (l.next) {
+        mapped.next = {
+          type: normalizeTypeUp(l.next.type),
+          mac: macFormatColon(l.next.mac || ""),
+        };
+      }
+      if (
+        mapped.type !== l.type ||
+        (l.prev && mapped.prev.type !== l.prev.type) ||
+        (l.next && mapped.next.type !== l.next.type)
+      ) {
+        changed = true;
+      }
+      return mapped;
+    };
+    const cleaned = linksObj.links
+      // drop POWER from chain if present
+      .filter((l) => normalizeTypeUp(l.type) !== "POWER")
+      .map(mapLink);
+
+    if (changed) {
+      const out = { links: cleaned };
+      localStorage.setItem(LS_LINKS, JSON.stringify(out));
+      return out;
+    }
+    return { links: cleaned };
   }
 
   // Seed on first run or when version changes
   (function ensureSeed() {
     const ver = localStorage.getItem(LS_VER);
     if (!localStorage.getItem(LS_PEERS) || ver !== VERSION) {
+      // Reseed and clear topology to avoid dangling MACs
       seedPeers();
-      // Reset topology when reseeding to avoid dangling MACs
       localStorage.removeItem(LS_LINKS);
+    } else {
+      // If we’re not reseeding, at least migrate stored data to unified sensor type
+      try {
+        const peers = JSON.parse(localStorage.getItem(LS_PEERS) || "[]");
+        migratePeers(peers);
+      } catch {}
+      try {
+        const linksObj = JSON.parse(localStorage.getItem(LS_LINKS) || "null");
+        if (linksObj) migrateLinks(linksObj);
+      } catch {}
     }
   })();
 
   // ----- Load/Save helpers -----
   const loadPeers = () => {
     try {
-      return JSON.parse(localStorage.getItem(LS_PEERS) || "[]");
+      const raw = JSON.parse(localStorage.getItem(LS_PEERS) || "[]");
+      return migratePeers(raw);
     } catch {
       return [];
     }
@@ -111,9 +192,10 @@
 
   const loadLinks = () => {
     try {
-      return JSON.parse(localStorage.getItem(LS_LINKS) || "null");
+      const raw = JSON.parse(localStorage.getItem(LS_LINKS) || "null");
+      return migrateLinks(raw);
     } catch {
-      return null;
+      return { links: [] };
     }
   };
   const saveLinks = (links) =>
@@ -180,6 +262,7 @@
     if (url.startsWith("/api/peers/list") && method === "GET") {
       const peers = loadPeers().map((p) => ({
         ...p,
+        type: normalizeTypeIn(p.type), // ensure unified in response
         mac: macFormatColon(p.mac),
       }));
       wobbleOnline(peers);
@@ -189,7 +272,7 @@
 
     // ---- Pair ----
     if (url.startsWith("/api/peer/pair") && method === "POST") {
-      const type = String(body.type || "").toLowerCase();
+      const type = normalizeTypeIn(body.type);
       const mac = macFormatColon(body.mac || "");
       if (!type || !macIsComplete(mac))
         return respond({ ok: false, error: "bad input" }, 400);
@@ -238,22 +321,22 @@
       if (!hasAtLeastOnePower())
         return respond({ ok: false, error: "no power paired" }, 409);
       const links = Array.isArray(body.links) ? body.links : [];
-      // normalize MACs and silently drop POWER if present in payload
+      // normalize/migrate: drop POWER; map entrance/parking->SENSOR; colonize MACs
       const cleaned = links
-        .filter((l) => !/^\s*power\s*$/i.test(l.type || ""))
+        .filter((l) => normalizeTypeUp(l.type) !== "POWER")
         .map((l) => {
           const out = {
-            type: String(l.type || "").toUpperCase(),
+            type: normalizeTypeUp(l.type),
             mac: macFormatColon(l.mac || ""),
           };
           if (l.prev)
             out.prev = {
-              type: String(l.prev.type || "").toUpperCase(),
+              type: normalizeTypeUp(l.prev.type),
               mac: macFormatColon(l.prev.mac || ""),
             };
           if (l.next)
             out.next = {
-              type: String(l.next.type || "").toUpperCase(),
+              type: normalizeTypeUp(l.next.type),
               mac: macFormatColon(l.next.mac || ""),
             };
           return out;
@@ -262,6 +345,62 @@
       if (body.push)
         return respond({ ok: true, pushed: true, count: cleaned.length });
       return respond({ ok: true, saved: true, count: cleaned.length });
+    }
+    // ---- SEMUX settings (mock) ----
+    if (url.startsWith("/api/semux/settings/get") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_semux_cfg_" + (mac || "default");
+      const defaults = {
+        name: "",
+        sensor_count: 9,
+        emulation_mode: "STATIC",
+        report_interval: 1000,
+        fan_mode: "AUTO",
+        buzzer_enabled: false,
+        log_level: "INFO",
+        auto_restart: false,
+        led_mode: "AUTO",
+        time_sync: "",
+        tf_luna_threshold_A: 100,
+        tf_luna_threshold_B: 150,
+        day_night_threshold: 50,
+      };
+      const cfg = JSON.parse(localStorage.getItem(key) || "null") || defaults;
+      return respond(cfg);
+    }
+    if (url.startsWith("/api/semux/settings/set") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_semux_cfg_" + (mac || "default");
+      localStorage.setItem(key, JSON.stringify(body.cfg || {}));
+      return respond({ ok: true });
+    }
+
+    // ---- REMUX settings (mock) ----
+    if (url.startsWith("/api/remux/settings/get") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_remux_cfg_" + (mac || "default");
+      const defaults = {
+        name: "",
+        relay_count: 16,
+        report_interval: 1000,
+        fan_mode: "AUTO",
+        buzzer_enabled: false,
+        log_level: "INFO",
+        auto_restart: false,
+        led_mode: "AUTO",
+        time_sync: "",
+        relay_state: [],
+        relay_mode: [],
+        pulse_duration: [],
+      };
+      const cfg = JSON.parse(localStorage.getItem(key) || "null") || defaults;
+      return respond(cfg);
+    }
+    if (url.startsWith("/api/remux/settings/set") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_remux_cfg_" + (mac || "default");
+      localStorage.setItem(key, JSON.stringify(body.cfg || {}));
+      return respond({ ok: true });
     }
 
     // ---- Sensor Day/Night ----
@@ -384,6 +523,42 @@
         ibus_mA: out.ibus_mA,
         tempC: out.tempC,
       });
+    }
+    // PMS Settings mock
+    if (url.startsWith("/api/pms/settings/get") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_pms_cfg_" + (mac || "default");
+      const cfg =
+        JSON.parse(localStorage.getItem(key) || "null") || pmsDefaults;
+      return respond(cfg);
+    }
+    if (url.startsWith("/api/pms/settings/set") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = "icm_pms_cfg_" + (mac || "default");
+      localStorage.setItem(key, JSON.stringify(body.cfg || {}));
+      return respond({ ok: true });
+    }
+    if (url.startsWith("/api/pms/reset") && method === "POST") {
+      // pretend we reset; maybe clear a power state cache here
+      return respond({ ok: true });
+    }
+
+    // GET/SET Relay settings (mock)
+    const LS_RL_PREFIX = "icm_relay_cfg_";
+
+    if (url.startsWith("/api/relay/settings/get") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const key = LS_RL_PREFIX + (mac || "default");
+      const cfg =
+        JSON.parse(localStorage.getItem(key) || "null") || relayDefaults;
+      return respond(cfg);
+    }
+    if (url.startsWith("/api/relay/settings/set") && method === "POST") {
+      const mac = macFormatColon(body.mac || "");
+      const cfg = body.cfg || {};
+      const key = LS_RL_PREFIX + (mac || "default");
+      localStorage.setItem(key, JSON.stringify(cfg));
+      return respond({ ok: true });
     }
 
     // ---- Relay sequence start/stop ----

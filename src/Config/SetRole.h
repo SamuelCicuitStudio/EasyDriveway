@@ -19,12 +19,12 @@
 // -------------------------------------------------------------------
 // ROLE SELECTION (exactly one defined)
 // -------------------------------------------------------------------
- #define NVS_ROLE_ICM    // Interface Control Module
+// #define NVS_ROLE_ICM    // Interface Control Module
 // #define NVS_ROLE_PMS    // Power Management Unit
 // #define NVS_ROLE_SENS   // Sensor (production)
 // #define NVS_ROLE_RELAY  // Relay  (production)
 // #define NVS_ROLE_SEMU   // Sensor Emulator (multi-input, shared MAC)
-// #define NVS_ROLE_REMU   // Relay  Emulator (multi-output, shared MAC)
+ #define NVS_ROLE_REMU   // Relay  Emulator (multi-output, shared MAC)
 
 // -------------------------------------------------------------------
 // VALIDATION

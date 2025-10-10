@@ -1,4 +1,6 @@
-/* ==== Base & Palette (matches Home) ==== */
+/* =========================================================
+   FONTS & ROOT THEME
+   ========================================================= */
 @font-face {
   font-family: "Inter";
   src: url("/fonts/Inter_18pt-Regular.ttf") format("truetype");
@@ -15,19 +17,24 @@
 }
 
 :root {
-  --laneVH: 420px; /* vertical lane fixed height */
+  /* Layout Vars (final effective values) */
+  --laneVH: 648px; /* vertical lane fixed height */
   --paneListH: 260px;
-  --laneH: 160px;
+  --laneH: 200px; /* visible lane height hint */
   --topRowH: 360px; /* fixed row heights to prevent cross-resizing */
   --bottomRowH: 300px;
+  --chainMaxW: 700px;
 
+  /* Palette */
   --cPower: #1ee6c1;
-  --cEntr: #2d7eea;
-  --cPark: #2bb84a;
+  --cSemux: #ef8f2f; /* orange-amber */
+  --cRemux: #5ad1ff; /* cyan-blue */
   --cRelay: #7a56f0;
   --cSens: #b8b02e;
+
+  /* Theme */
   --bg1: #0e1320;
-  --bg2: #0b1323; /* preserved */
+  --bg2: #0b1323;
   --pane: #141a2b;
   --line: #1f2940;
   --text: #e8eef7;
@@ -37,27 +44,55 @@
   --warn: #ffcc66;
   --danger: #ff5a6b;
   --info: #64b5ff;
+
+  color-scheme: dark;
 }
 
+/* =========================================================
+   BASE / RESET / BACKGROUND
+   ========================================================= */
 * {
   box-sizing: border-box;
 }
+
 html,
 body {
+  min-height: 100vh;
   height: 100%;
-  overflow: hidden;
-  background: radial-gradient(1400 900px at 30% 10%, #0d1424, #0a0f17);
-}
-body {
   margin: 0;
+  overflow: hidden;
+  background-color: #0a0f17;
+  background-image: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: cover;
+}
+
+body {
   display: grid;
   place-items: center;
   color: var(--text);
-  background: radial-gradient(1400 900px at 30% 10%, #0d1424, #0a0f17);
   font: 13px/1.4 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
 }
 
-/* Fixed outer frame */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
+}
+
+/* Ensure the main containers never paint white */
+#app,
+.frame,
+.wrap {
+  background-clip: padding-box;
+}
+
+/* =========================================================
+   APP FRAME / TOPBAR / HERO
+   ========================================================= */
 .frame {
   width: 1300px;
   height: 800px;
@@ -71,7 +106,6 @@ body {
     inset 0 1px rgba(255, 255, 255, 0.03);
 }
 
-/* Topbar & hero */
 .topbar {
   flex: 0 0 auto;
   display: flex;
@@ -101,6 +135,7 @@ body {
   font-weight: 700;
   font-size: 13px;
 }
+
 .nav {
   display: flex;
   gap: 6px;
@@ -118,6 +153,7 @@ body {
   background: #12192a;
   color: #dbe6f5;
 }
+
 .logout button {
   background: transparent;
   color: #99a8c2;
@@ -155,7 +191,9 @@ body {
   font-size: 11px;
 }
 
-/* Scrollable content */
+/* =========================================================
+   SCROLLABLE WRAPPER
+   ========================================================= */
 .wrap {
   flex: 1 1 auto;
   overflow: hidden;
@@ -163,28 +201,14 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--info) #0d1424;
 }
-.wrap::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-.wrap::-webkit-scrollbar-track {
-  background: #0d1424;
-  border-left: 1px solid var(--line);
-}
-.wrap::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, var(--info), #3b9df5);
-  border-radius: 10px;
-  border: 2px solid #0d1424;
-}
-.wrap::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, var(--accent), #18c99b);
-}
 
-/* Grid + cards */
+/* =========================================================
+   GRID LAYOUT & CARD SHELL
+   ========================================================= */
 .grid.grid-3 {
   display: grid;
   grid-template-columns: 1fr 1.2fr 1fr;
-  grid-template-rows: minmax(260px, 1fr) minmax(220px, 1fr); /* responsive rows */
+  grid-template-rows: minmax(260px, 1fr) minmax(220px, 1fr);
   grid-template-areas:
     "palette chain selected"
     "peers   chain pair";
@@ -192,8 +216,6 @@ body {
   height: 100%;
   min-height: 0;
 }
-
-/* Explicit grid areas */
 .card-palette {
   grid-area: palette;
 }
@@ -208,34 +230,6 @@ body {
 }
 .card-pair {
   grid-area: pair;
-}
-
-/* Chain explicit max sizing */
-:root {
-  --laneVH: 585px; /* vertical lane fixed height */
-  --chainMaxW: 700px; /* adjust to taste */
-  --laneH: 200px; /* visible height of the lane area */
-}
-.card-chain {
-  max-width: var(--chainMaxW);
-  display: flex;
-  flex-direction: column;
-}
-.card-chain .lane {
-  flex: 0 0 auto;
-  height: var(--laneVH);
-  max-height: var(--laneVH);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  background: #0b0f19;
-  border: 1px dashed #2a3550;
-  border-radius: 10px;
-  padding: 10px;
-  overflow-y: auto;
-  overflow-x: hidden;
 }
 
 .card {
@@ -260,6 +254,9 @@ body {
   font-size: 13px;
 }
 
+/* =========================================================
+   BADGES
+   ========================================================= */
 .badge {
   font-size: 10px;
   color: #0a241c;
@@ -277,7 +274,9 @@ body {
   color: #2b1d04;
 }
 
-/* Controls */
+/* =========================================================
+   CONTROLS (rows, chips, buttons, inputs)
+   ========================================================= */
 .row {
   display: flex;
   gap: 8px;
@@ -286,11 +285,13 @@ body {
 .smallgap {
   gap: 6px;
 }
+
 .kv {
   background: #0d1424;
   border: 1px solid #1f2940;
   border-radius: 9px;
   padding: 6px;
+  max-width: 100%;
 }
 .kv label {
   display: block;
@@ -298,6 +299,11 @@ body {
   color: #9eb0c7;
   margin-bottom: 3px;
 }
+.kv .value {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .btn {
   padding: 6px 8px;
   border-radius: 8px;
@@ -317,6 +323,7 @@ body {
   background: rgba(255, 90, 107, 0.08);
   color: #ffd1d6;
 }
+
 select,
 input[type="number"],
 input[type="text"] {
@@ -328,7 +335,9 @@ input[type="text"] {
   font-size: 13px;
 }
 
-/* Palette */
+/* =========================================================
+   PALETTE (drag pills) + Emulator dropdown (SEMUX/REMUX)
+   ========================================================= */
 .palette {
   flex: 1 1 auto;
   min-height: 0;
@@ -348,6 +357,8 @@ input[type="text"] {
   color: #9eb0c7;
   padding: 2px 4px;
 }
+
+/* ---------- Base pill (legacy items) ---------- */
 .pill {
   display: flex;
   flex-direction: column;
@@ -384,22 +395,180 @@ input[type="text"] {
 .pill.t-power {
   border-color: var(--cPower);
 }
-.pill.t-entr {
-  border-color: var(--cEntr);
-}
-.pill.t-park {
-  border-color: var(--cPark);
-}
 .pill.t-relay {
   border-color: var(--cRelay);
 }
 .pill.t-sens {
   border-color: var(--cSens);
 }
+.pill.t-semux {
+  border-color: var(--cSemux);
+}
+.pill.t-remux {
+  border-color: var(--cRemux);
+}
 
-/* Chain */
+/* ---------- Emulator: parent pill OVERRIDES ---------- */
+/* Important: parent-pill also has class 'pill' in HTML/JS, so override hard. */
+.palette .parent-pill {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #26314a);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02),
+    rgba(0, 0, 0, 0.12)
+  );
+  cursor: pointer !important; /* not draggable */
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.palette .parent-pill:hover {
+  border-color: #2f3c5c;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22),
+    inset 0 1px rgba(255, 255, 255, 0.04);
+}
+.palette .parent-pill .pill-title {
+  font-weight: 700;
+  font-size: 12px;
+}
+.palette .parent-pill .pill-mac {
+  font-size: 12px;
+  opacity: 0.9;
+}
+.palette .parent-pill .pill-count {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #0e1628;
+  border: 1px solid #273149;
+  color: #9fb4d8;
+}
+.palette .parent-pill .chev {
+  font-size: 12px;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease;
+  opacity: 0.8;
+}
+.palette .parent-pill[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+/* Tint labels */
+.palette .parent-pill.t-semux .tag {
+  color: var(--cSemux, #3ad1ff);
+}
+.palette .parent-pill.t-remux .tag {
+  color: var(--cRemux, #ff9b3a);
+}
+
+/* ---------- Channels list: collapsed by default ---------- */
+.palette .emu-channels {
+  display: none; /* start hidden */
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px 2px 2px 2px;
+}
+.palette .emu-channels[hidden] {
+  display: none !important;
+} /* if JS toggles [hidden] */
+/* Show when parent is expanded (works even if JS doesn’t toggle [hidden]) */
+.palette .parent-pill[aria-expanded="true"] + .emu-channels {
+  display: grid;
+}
+@media (max-width: 1180px) {
+  .palette .parent-pill[aria-expanded="true"] + .emu-channels {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Channel item (draggable) ---------- */
+.palette .emu-chan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: grab;
+  border: 1px solid #273149;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02),
+    rgba(0, 0, 0, 0.1)
+  );
+  transition: transform 0.05s, box-shadow 0.2s, border-color 0.2s;
+}
+.palette .emu-chan:active {
+  transform: translateY(1px);
+}
+.palette .emu-chan:hover {
+  border-color: #334366;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22),
+    inset 0 1px rgba(255, 255, 255, 0.04);
+}
+.palette .emu-chan .tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.3px;
+  opacity: 0.9;
+}
+.palette .emu-chan .label {
+  font-size: 12px;
+  color: #cfd8e6;
+}
+/* Tints for children */
+.palette .emu-chan.t-semux .tag {
+  color: var(--cSemux, #3ad1ff);
+}
+.palette .emu-chan.t-remux .tag {
+  color: var(--cRemux, #ff9b3a);
+}
+.palette .emu-chan.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+/* ---------- Focus rings ---------- */
+.palette .parent-pill:focus-visible,
+.palette .emu-chan:focus-visible {
+  outline: 2px solid var(--accent, #18c99b);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(24, 201, 155, 0.25);
+}
+
+/* Show emulator-only controls only when form has [data-emu="true"] */
+.modal-body .emu-only {
+  display: none;
+}
+.modal-body[data-emu="true"] .emu-only {
+  display: block;
+}
+
+/* =========================================================
+   CHAIN (middle column)
+   ========================================================= */
+.card-chain {
+  max-width: var(--chainMaxW);
+  display: flex;
+  flex-direction: column;
+}
+
 .card-chain .lane {
   flex: 0 0 auto;
+  height: var(--laneVH);
+  max-height: var(--laneVH);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -409,8 +578,6 @@ input[type="text"] {
   border: 1px dashed #2a3550;
   border-radius: 10px;
   padding: 10px;
-  height: var(--laneVH);
-  max-height: var(--laneVH);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -437,7 +604,7 @@ input[type="text"] {
   align-items: center;
   gap: 4px;
   padding: 6px 10px;
-  margin: 0 0 0px 0;
+  margin: 0;
   background: #111b2f;
   border: 1px solid #2a3a5d;
   border-radius: 10px;
@@ -448,7 +615,7 @@ input[type="text"] {
   overflow: hidden;
   text-overflow: ellipsis;
   align-self: center;
-  flex: 0 0 auto; /* keep natural height; do not shrink */
+  flex: 0 0 auto;
 }
 .brick.selected {
   outline: 2px solid var(--accent);
@@ -469,7 +636,80 @@ input[type="text"] {
   white-space: nowrap;
 }
 
-/* Peers */
+/* Type-proportional widths */
+.brick.sensor {
+  width: clamp(300px, 92%, 640px);
+}
+.brick.relay {
+  width: clamp(260px, 78%, 520px);
+}
+
+/* Type-colored bricks */
+.brick.sensor {
+  background: linear-gradient(
+    180deg,
+    rgba(184, 176, 46, 0.18),
+    rgba(17, 27, 47, 0.92)
+  );
+  border-color: var(--cSens);
+}
+.brick.relay {
+  background: linear-gradient(
+    180deg,
+    rgba(122, 86, 240, 0.18),
+    rgba(17, 27, 47, 0.92)
+  );
+  border-color: var(--cRelay);
+}
+/* Bricks: emulator virtuals get a softer but distinct glow */
+.brick.semux-virt {
+  background: linear-gradient(
+    180deg,
+    rgba(239, 143, 47, 0.18),
+    rgba(17, 27, 47, 0.92)
+  );
+  border-color: var(--cSemux);
+}
+.brick.remux-virt {
+  background: linear-gradient(
+    180deg,
+    rgba(90, 209, 255, 0.18),
+    rgba(17, 27, 47, 0.92)
+  );
+  border-color: var(--cRemux);
+}
+/* Brick tag borders by type */
+.brick.sensor .tag {
+  border-color: var(--cSens);
+  color: #e8eef7;
+}
+.brick.relay .tag {
+  border-color: var(--cRelay);
+  color: #e8eef7;
+}
+
+.brick.semux-virt .tag {
+  border-color: var(--cSemux);
+}
+.brick.remux-virt .tag {
+  border-color: var(--cRemux);
+}
+/* Standalone connector element between bricks */
+.connector {
+  width: 2px;
+  height: 35px;
+  min-height: 35px;
+  flex: 0 0 35px;
+  background: #2a3550;
+  border-radius: 2px;
+  margin: -8px 0 -8px 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+  align-self: center;
+}
+
+/* =========================================================
+   PEERS LIST (table)
+   ========================================================= */
 .peers-controls {
   margin-bottom: 6px;
 }
@@ -479,6 +719,7 @@ input[type="text"] {
   overflow: auto;
   overscroll-behavior: contain;
 }
+
 .tbl {
   width: 100%;
   border-collapse: collapse;
@@ -497,7 +738,9 @@ input[type="text"] {
   background: rgba(0, 255, 174, 0.12);
 }
 
-/* Actions row */
+/* =========================================================
+   ACTIONS ROW / TOAST
+   ========================================================= */
 .chain-actions {
   display: flex;
   gap: 8px;
@@ -505,7 +748,6 @@ input[type="text"] {
   margin-top: 8px;
 }
 
-/* Toast */
 .toast {
   margin-top: 6px;
   padding: 6px 8px;
@@ -516,10 +758,13 @@ input[type="text"] {
   color: #bff6e6;
 }
 
-/* ===== Gauges ===== */
+/* =========================================================
+   GAUGES
+   ========================================================= */
 .g-row {
   align-items: center;
 }
+
 .gauge {
   --val: 0;
   --min: 0;
@@ -556,7 +801,607 @@ input[type="text"] {
   color: #9eb0c7;
 }
 
-/* Scrollbars (shared) */
+/* Status tint helpers (text + gauges) */
+.state-ok {
+  color: var(--ok);
+}
+.state-warn {
+  color: var(--warn);
+}
+.state-danger {
+  color: var(--danger);
+}
+
+.gauge.state-ok {
+  --accent: var(--ok);
+}
+.gauge.state-warn {
+  --accent: var(--warn);
+}
+.gauge.state-danger {
+  --accent: var(--danger);
+}
+
+.kv.state-warn {
+  border-color: #6a5200;
+}
+.kv.state-danger {
+  border-color: #7a0014;
+}
+
+/* =========================================================
+   SELECTED PANEL (sticky header + scroll body) — Optimized
+   ========================================================= */
+
+/* Only the visible panel participates */
+#selInfo[hidden],
+#selNone[hidden] {
+  display: none !important;
+}
+
+/* Card container */
+.card.card-selected {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* allow inner scroll areas */
+}
+.card.card-selected > header {
+  flex: 0 0 auto; /* sticky/header zone */
+}
+
+/* Body (Info + None): stop body-level scrolling; we'll scroll inside panels */
+.card.card-selected :is(#selInfo, #selNone) {
+  flex: 1 1 auto; /* fill space under header */
+  min-height: 0; /* critical for inner scrolling */
+  overflow: hidden; /* <-- move scrolling away from body */
+  padding-right: 0; /* scrollbar padding handled by panel */
+  overscroll-behavior: none;
+}
+
+/* INFO body layout (stacked) */
+.card.card-selected #selInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.card.card-selected #selInfo .kv.lg > * + * {
+  margin-top: 8px;
+}
+.card.card-selected #selInfo .controls {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* NONE body: fill and center message box */
+.card.card-selected #selNone {
+  display: flex;
+  flex-direction: column;
+}
+.card.card-selected #selNone > .kv {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- SENSOR panel (the ONLY scrollable area) ---- */
+#panelSensor.sensor-panel {
+  flex: 1 1 auto; /* take remaining height inside selInfo */
+  min-height: 0; /* allow scrolling */
+  overflow: auto; /* <-- scroll lives here */
+  overscroll-behavior: contain;
+  padding-right: 6px; /* room for scrollbar */
+  position: relative;
+}
+
+/* Ensure rows inside the sensor panel never become scroll containers */
+#panelSensor.sensor-panel .row.smallgap {
+  overflow: visible;
+}
+
+/* Sensor grid & tiles */
+.sensor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* gauge | metrics */
+  gap: 10px;
+}
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.metric-gauge {
+  align-items: center;
+  justify-content: center;
+}
+.metric-title {
+  font-weight: 600;
+  color: #cfd8e6;
+  font-size: 12px;
+  text-align: center;
+}
+.kv.mini {
+  padding: 8px;
+  border-radius: 10px;
+}
+.kv.mini .value {
+  font-weight: 700;
+}
+
+/* Responsive: stack on narrow screens */
+@media (max-width: 900px) {
+  .sensor-grid {
+    grid-template-columns: 1fr;
+  }
+  .metric-status .row.smallgap {
+    justify-content: center;
+  }
+}
+
+/* Sensor loading state */
+.sensor-panel.loading {
+  filter: saturate(0.6) opacity(0.9);
+}
+.sensor-panel.loading .skeleton,
+.sensor-panel.loading .kv .value:empty::after {
+  content: "";
+  display: inline-block;
+  width: 72px;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #0f1a2d, #162440, #0f1a2d);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Custom scrollbar — now ONLY on the sensor panel */
+#panelSensor.sensor-panel::-webkit-scrollbar {
+  width: 10px;
+}
+#panelSensor.sensor-panel::-webkit-scrollbar-track {
+  background: #0d1424;
+}
+#panelSensor.sensor-panel::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--info), #3b9df5);
+  border-radius: 10px;
+  border: 2px solid #0d1424;
+}
+#panelSensor.sensor-panel::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--accent), #18c99b);
+}
+
+/* (Keep your earlier alignment tweak if needed)
+.card.card-selected #selInfo .row.smallgap {
+  justify-content: center; align-items: stretch; gap: 6px; flex-wrap: nowrap; min-width: 0;
+}
+.card.card-selected #selInfo .row.smallgap > .kv {
+  flex: 0 0 auto; max-width: 100%; min-width: 260px;
+}
+@media (max-width: 860px) {
+  .card.card-selected #selInfo .row.smallgap { flex-wrap: wrap; }
+  .card.card-selected #selInfo .row.smallgap > .kv { flex: 1 1 300px; min-width: 220px; }
+}
+*/
+/* =========================================================
+                    SENSOR MODAL SETTINGS
+   ========================================================= */
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 1000;
+}
+.modal[aria-hidden="false"] {
+  display: block;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 8, 20, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.modal-dialog {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: min(560px, 100%);
+  background: #0e1628;
+  border-left: 1px solid #1f2940;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.18s ease-out;
+}
+@keyframes slideIn {
+  from {
+    transform: translateX(12px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.modal-header,
+.modal-footer {
+  padding: 12px 14px;
+  border-bottom: 1px solid #1f2940;
+}
+.modal-footer {
+  border-top: 1px solid #1f2940;
+  border-bottom: none;
+}
+.modal-body {
+  padding: 12px 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 0;
+  color: #cfd8e6;
+  font-size: 18px;
+  cursor: pointer;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Settings form grid */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.form-grid .kv.mini input,
+.form-grid .kv.mini select {
+  width: 100%;
+}
+@media (max-width: 720px) {
+  .modal-dialog {
+    width: 100%;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* =========================================================
+   SETTINGS DRAWERS — Centered content & vertical sections
+   ========================================================= */
+
+/* Drawer container stays the same — we center the inner form */
+.modal-dialog {
+  /* existing styles are fine; we just cap inner width via .settings */
+}
+
+/* Shared layout for all settings forms */
+.settings {
+  /* centers & constrains content inside the drawer body */
+  margin: 0 auto;
+  width: min(760px, 100%); /* nice readable line length */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Section wrapper with title + content */
+.settings-section {
+  background: #0d1424;
+  border: 1px solid #1f2940;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15),
+    inset 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.settings-section .section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #dbe6f5;
+  margin-bottom: 10px;
+}
+
+/* Grid inside a section */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* two columns */
+  gap: 10px;
+}
+.settings-grid .kv.mini {
+  padding: 8px;
+  border-radius: 10px;
+}
+
+/* Full-width line (spans both columns) */
+.settings-grid .full {
+  grid-column: 1 / -1;
+}
+
+/* Controls look consistent and centered */
+.settings .row.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Make inputs/selects fill their cell nicely */
+.settings input[type="text"],
+.settings input[type="number"],
+.settings input[type="datetime-local"],
+.settings select {
+  width: 100%;
+}
+
+/* Relay/PMS little checkbox chips */
+.settings .chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #0d1424;
+  border: 1px solid #1f2940;
+  border-radius: 8px;
+}
+
+/* Tidy footer */
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Responsive: stack sections and grids on narrow screens */
+@media (max-width: 760px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* =========================================================
+   SEMUX REMUX
+   ========================================================= */
+/* (Optional) subtle dividers between sections */
+.settings-section + .settings-section {
+  border-top-color: #25304a;
+}
+/* Emulator group labels in Peers table / cards */
+.badge-emu {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #142037;
+  border: 1px solid #263251;
+  color: #bfe6ff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Virtual bricks small index chip */
+.brick .vindex {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #0d1424;
+  border: 1px solid #1f2940;
+  font-size: 10px;
+  opacity: 0.85;
+}
+/* =========================================================
+   EMULATOR VISIBILITY TOGGLES — Modals only
+   (Never show in Selected panel)
+   ========================================================= */
+
+/* Never show emulator-only controls inside the Selected panel */
+#selInfo .emu-only,
+#selInfo .emu-only-semux,
+#selInfo .emu-only-remux,
+#selInfo .emu-semux-only,
+#selInfo .emu-remux-only {
+  display: none !important;
+}
+
+/* Default: hide in modals, too (opt-in via data-emu) */
+.modal-body .emu-only,
+.modal-body .emu-only-semux,
+.modal-body .emu-only-remux,
+.modal-body .emu-semux-only, /* alias supported */
+.modal-body .emu-remux-only   /* alias supported */ {
+  display: none !important;
+}
+
+/* Show SEMUX blocks only when the modal carries data-emu="semux" */
+.modal-body[data-emu="semux"] .emu-only,
+.modal-body[data-emu="semux"] .emu-only-semux,
+.modal-body[data-emu="semux"] .emu-semux-only {
+  display: block !important;
+}
+
+/* Show REMUX blocks only when the modal carries data-emu="remux" */
+.modal-body[data-emu="remux"] .emu-only,
+.modal-body[data-emu="remux"] .emu-only-remux,
+.modal-body[data-emu="remux"] .emu-remux-only {
+  display: block !important;
+}
+
+/* =========================================================
+   Palette emulator channel — selected visual
+   ========================================================= */
+.palette .emu-chan {
+  position: relative;
+}
+.palette .emu-chan.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(24, 201, 155, 0.35) inset;
+}
+/* optional corner notch (kept lightweight) */
+.palette .emu-chan.selected::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-style: solid;
+  border-width: 0 12px 12px 0;
+  border-color: transparent var(--accent) transparent transparent;
+  border-top-right-radius: 8px;
+}
+
+/* =========================================================
+   PAIR / REMOVE PANEL
+   ========================================================= */
+.card-pair .pair-body {
+  display: flex;
+  justify-content: center; /* center the two KV blocks */
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: nowrap; /* keep on one line when space allows */
+  padding: 4px 2px;
+  overflow: hidden; /* override .scrollable: no inner scrollbars */
+}
+.card-pair .kv {
+  background: linear-gradient(180deg, #0e1628, #0b1323);
+  border: 1px solid #273149;
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25),
+    inset 0 1px rgba(255, 255, 255, 0.04);
+}
+.card-pair .kv label {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.card-pair .kv > * + * {
+  margin-top: 8px;
+}
+
+/* Full-width fields for clean stacking */
+.card-pair select,
+.card-pair input[type="text"],
+.card-pair input[type="number"] {
+  width: 102px;
+}
+
+/* Buttons (chunky) */
+.card-pair .btn {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #2b3a5a;
+  background: linear-gradient(180deg, #111c33, #0e1527);
+  font-weight: 600;
+  transition: transform 0.05s ease, box-shadow 0.2s, border-color 0.2s;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+.card-pair .btn:hover {
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(0, 255, 174, 0.25) inset;
+}
+.card-pair .btn:active {
+  transform: translateY(1px);
+}
+
+/* Primary/Destructive accents */
+#btnPair {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 255, 174, 0.16),
+    rgba(11, 19, 35, 0.92)
+  );
+  border-color: #1a584a;
+  box-shadow: 0 8px 24px rgba(0, 255, 174, 0.12),
+    inset 0 0 0 1px rgba(0, 255, 174, 0.18);
+}
+#btnPair:hover {
+  box-shadow: 0 12px 30px rgba(0, 255, 174, 0.18),
+    inset 0 0 0 1px rgba(0, 255, 174, 0.28);
+}
+#btnRemove {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 90, 107, 0.12),
+    rgba(11, 19, 35, 0.92)
+  );
+  border-color: #5a0010;
+  box-shadow: 0 8px 24px rgba(255, 90, 107, 0.12),
+    inset 0 0 0 1px rgba(255, 90, 107, 0.18);
+}
+#btnRemove:hover {
+  box-shadow: 0 12px 30px rgba(255, 90, 107, 0.18),
+    inset 0 0 0 1px rgba(255, 90, 107, 0.28);
+}
+
+/* =========================================================
+   MISC UTILITIES
+   ========================================================= */
+.dn-pill {
+  display: inline-block;
+  min-width: 80px;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #2a3a5d;
+  background: #0d1424;
+  color: #e8eef7;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.dn-pill.day {
+  border-color: #1a584a;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 255, 174, 0.14),
+    rgba(11, 19, 35, 0.92)
+  );
+}
+.dn-pill.night {
+  border-color: #354171;
+  background: linear-gradient(
+    180deg,
+    rgba(100, 181, 255, 0.14),
+    rgba(11, 19, 35, 0.92)
+  );
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 12px;
+}
+
+/* Keyboard focus */
+button:focus-visible,
+a:focus-visible,
+.pill:focus-visible,
+.brick:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(100, 181, 255, 0.35);
+  border-radius: 10px;
+}
+
+/* =========================================================
+   SCROLLBARS (shared look)
+   ========================================================= */
 .scrollable,
 .wrap,
 .palette,
@@ -598,7 +1443,9 @@ input[type="text"] {
   background: linear-gradient(180deg, var(--accent), #18c99b);
 }
 
-/* Responsive guardrails */
+/* =========================================================
+   RESPONSIVE GUARDRAILS (order preserved for cascade)
+   ========================================================= */
 @media (max-width: 1180px) {
   .grid.grid-3 {
     grid-template-columns: 1fr 1fr 1fr;
@@ -614,330 +1461,6 @@ input[type="text"] {
     grid-auto-rows: minmax(200px, auto);
   }
 }
-
-/* Type-proportional widths: sensor > entrance/parking > relay */
-.brick.sensor {
-  width: clamp(300px, 92%, 640px);
-}
-.brick.entrance,
-.brick.parking {
-  width: clamp(280px, 86%, 560px);
-}
-.brick.relay {
-  width: clamp(260px, 78%, 520px);
-}
-
-/* Type-colored bricks */
-.brick.sensor {
-  background: linear-gradient(
-    180deg,
-    rgba(184, 176, 46, 0.18),
-    rgba(17, 27, 47, 0.92)
-  );
-  border-color: var(--cSens);
-}
-.brick.relay {
-  background: linear-gradient(
-    180deg,
-    rgba(122, 86, 240, 0.18),
-    rgba(17, 27, 47, 0.92)
-  );
-  border-color: var(--cRelay);
-}
-.brick.entrance {
-  background: linear-gradient(
-    180deg,
-    rgba(45, 126, 234, 0.18),
-    rgba(17, 27, 47, 0.92)
-  );
-  border-color: var(--cEntr);
-}
-.brick.parking {
-  background: linear-gradient(
-    180deg,
-    rgba(43, 184, 74, 0.18),
-    rgba(17, 27, 47, 0.92)
-  );
-  border-color: var(--cPark);
-}
-
-.brick.sensor .tag {
-  border-color: var(--cSens);
-  color: #e8eef7;
-}
-.brick.relay .tag {
-  border-color: var(--cRelay);
-  color: #e8eef7;
-}
-.brick.entrance .tag {
-  border-color: var(--cEntr);
-  color: #e8eef7;
-}
-.brick.parking .tag {
-  border-color: var(--cPark);
-  color: #e8eef7;
-}
-
-/* Standalone connector element between bricks */
-.connector {
-  width: 2px;
-  height: 35px;
-  min-height: 35px;
-  flex: 0 0 35px; /* prevents shrinking before scroll */
-  background: #2a3550;
-  border-radius: 2px;
-  margin: -8px 0 -8px 0; /* overlap for continuity */
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
-  align-self: center;
-}
-
-/* === Pair / Remove section refinements === */
-.card-pair .pair-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px; /* space between the two inner containers */
-  padding-right: 2px; /* keep scrollbar off content edge if visible */
-}
-
-.card-pair .kv {
-  background: linear-gradient(180deg, #0e1628, #0b1323);
-  border: 1px solid #273149;
-  border-radius: 12px;
-  padding: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25),
-    inset 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.card-pair .kv label {
-  font-weight: 600;
-  letter-spacing: 0.2px;
-}
-
-/* Full-width fields for clean stacking */
-.card-pair select,
-.card-pair input[type="text"],
-.card-pair input[type="number"] {
-  width: 102px;
-}
-
-/* Buttons in the Pair/Remove zone: chunkier, glossy, with gentle glow */
-.card-pair .btn {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid #2b3a5a;
-  background: linear-gradient(180deg, #111c33, #0e1527);
-  font-weight: 600;
-  transition: transform 0.05s ease, box-shadow 0.2s, border-color 0.2s;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(0, 0, 0, 0.2);
-}
-
-.card-pair .btn:hover {
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32),
-    0 0 0 1px rgba(0, 255, 174, 0.25) inset;
-}
-
-.card-pair .btn:active {
-  transform: translateY(1px);
-}
-
-/* Primary/Destructive accents for the specific actions */
-#btnPair {
-  background: linear-gradient(
-    180deg,
-    rgba(0, 255, 174, 0.16),
-    rgba(11, 19, 35, 0.92)
-  );
-  border-color: #1a584a;
-  box-shadow: 0 8px 24px rgba(0, 255, 174, 0.12),
-    inset 0 0 0 1px rgba(0, 255, 174, 0.18);
-}
-#btnPair:hover {
-  box-shadow: 0 12px 30px rgba(0, 255, 174, 0.18),
-    inset 0 0 0 1px rgba(0, 255, 174, 0.28);
-}
-
-#btnRemove {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 90, 107, 0.12),
-    rgba(11, 19, 35, 0.92)
-  );
-  border-color: #5a0010;
-  box-shadow: 0 8px 24px rgba(255, 90, 107, 0.12),
-    inset 0 0 0 1px rgba(255, 90, 107, 0.18);
-}
-#btnRemove:hover {
-  box-shadow: 0 12px 30px rgba(255, 90, 107, 0.18),
-    inset 0 0 0 1px rgba(255, 90, 107, 0.28);
-}
-
-/* Optional: small vertical spacing inside each KV block */
-.card-pair .kv > * + * {
-  margin-top: 8px;
-}
-
-/* === Selected section: vertical spacing between inner blocks === */
-.card-selected #selInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 12px; /* vertical distance between inner blocks */
-}
-/* Extra spacing inside large KV panels for readability */
-.card-selected .kv.lg > * + * {
-  margin-top: 8px;
-}
-/* Keep action buttons tidy inside Selected panels */
-.card-selected .controls {
-  margin-top: 6px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-/* === Full-viewport background hard fix (prevents any white bleed) === */
-:root {
-  color-scheme: dark;
-}
-
-html,
-body {
-  min-height: 100vh;
-  height: 100%;
-  margin: 0;
-  background-color: #0a0f17;
-  background-image: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  background-size: cover;
-}
-
-/* Pin a non-scrolling paint layer behind everything */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: radial-gradient(1400px 900px at 30% 10%, #0d1424, #0a0f17);
-}
-
-/* Ensure the main app container never paints white */
-#app,
-.frame,
-.wrap {
-  background-clip: padding-box;
-}
-
-/* Day/Night pill */
-.dn-pill {
-  display: inline-block;
-  min-width: 80px;
-  text-align: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid #2a3a5d;
-  background: #0d1424;
-  color: #e8eef7;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-}
-.dn-pill.day {
-  border-color: #1a584a;
-  background: linear-gradient(
-    180deg,
-    rgba(0, 255, 174, 0.14),
-    rgba(11, 19, 35, 0.92)
-  );
-}
-.dn-pill.night {
-  border-color: #354171;
-  background: linear-gradient(
-    180deg,
-    rgba(100, 181, 255, 0.14),
-    rgba(11, 19, 35, 0.92)
-  );
-}
-/* === Selected: keep header fixed, make body scroll === */
-.card.card-selected {
-  display: flex;
-  flex-direction: column;
-  min-height: 0; /* allow inner to shrink in grid */
-}
-.card.card-selected > header {
-  flex: 0 0 auto;
-}
-
-/* selInfo/selNone become the scrollable body */
-.card.card-selected #selInfo,
-.card.card-selected #selNone {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain; /* << key */
-  padding-right: 6px; /* room for scrollbar */
-}
-
-/* Prevent key/value boxes from overflowing */
-.kv {
-  max-width: 100%;
-}
-.kv .value {
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-/* Monospace helper used for MAC etc. */
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
-    monospace;
-  font-size: 12px;
-}
-
-/* Optional: match your scrollbar styling inside selInfo */
-.card.card-selected #selInfo::-webkit-scrollbar {
-  width: 10px;
-}
-.card.card-selected #selInfo::-webkit-scrollbar-track {
-  background: #0d1424;
-}
-.card.card-selected #selInfo::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, var(--info), #3b9df5);
-  border-radius: 10px;
-  border: 2px solid #0d1424;
-}
-.card.card-selected #selInfo::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, var(--accent), #18c99b);
-}
-
-/* === Status tint helpers (text + gauges) === */
-.state-ok {
-  color: var(--ok);
-}
-.state-warn {
-  color: var(--warn);
-}
-.state-danger {
-  color: var(--danger);
-}
-
-/* Gauge ring picks color from --accent; flip it by state */
-.gauge.state-ok {
-  --accent: var(--ok);
-}
-.gauge.state-warn {
-  --accent: var(--warn);
-}
-.gauge.state-danger {
-  --accent: var(--danger);
-}
-
-/* (Optional) give the key/value chip a subtle border tint when bad */
-.kv.state-warn {
-  border-color: #6a5200;
-}
-.kv.state-danger {
-  border-color: #7a0014;
-}
-
 @media (max-width: 1280px) {
   .grid.grid-3 {
     grid-template-columns: 1fr 1fr;
@@ -959,12 +1482,77 @@ body::before {
       "pair";
   }
 }
+/* =========================================================
+   RIGHT COLUMN: DEFINITIVE PIXEL HEIGHTS (DROP-IN)
+   - Paste at the very end of topology.css
+   - Edit --selectedH and --pairH to exact pixel heights
+   ========================================================= */
 
-button:focus-visible,
-a:focus-visible,
-.pill:focus-visible,
-.brick:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(100, 181, 255, 0.35);
-  border-radius: 10px;
+:root {
+  /* Exact heights (px) — these are definitive */
+  --selectedH: 465px; /* e.g., 420px, 500px, etc. */
+  --pairH: 260px; /* e.g., 160px, 220px, etc.  */
+  --rightGap: 6px; /* visual gap between them   */
+}
+
+@media (min-width: 1281px) {
+  /* Keep other cards untouched; only re-map right column cards
+     to share the same column space (rows 1..2) */
+  .card-selected,
+  .card-pair {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    justify-self: stretch;
+  }
+
+  /* SELECTED — top block with definitive height */
+  .card-selected {
+    align-self: start;
+    margin-bottom: var(--rightGap);
+    height: var(--selectedH) !important;
+    max-height: var(--selectedH) !important;
+    min-height: 0 !important;
+    overflow: hidden; /* neat shell */
+    display: flex;
+    flex-direction: column;
+    z-index: 2;
+  }
+  /* Keep SELECTED body scrollable inside fixed shell */
+  .card.card-selected > header {
+    flex: 0 0 auto;
+  }
+  .card.card-selected #selInfo,
+  .card.card-selected #selNone {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-right: 6px;
+  }
+
+  /* PAIR/REMOVE — bottom block with definitive height */
+  .card-pair {
+    align-self: end;
+    height: var(--pairH) !important;
+    max-height: var(--pairH) !important;
+    min-height: 0 !important;
+    overflow: auto;
+    z-index: 3;
+  }
+  .card-pair .pair-body {
+    overflow: auto;
+    min-height: 0;
+  }
+}
+
+/* Narrow layouts fall back to normal stacking */
+@media (max-width: 1280px) {
+  .card-selected,
+  .card-pair {
+    grid-column: auto;
+    grid-row: auto;
+    height: auto !important;
+    max-height: none !important;
+    margin-bottom: 0;
+  }
 }

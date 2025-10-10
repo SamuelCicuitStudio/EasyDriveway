@@ -36,16 +36,29 @@
               />
             </svg>
           </div>
-        <div class="grow"></div>
-        <label class="input" aria-label="Filter peers">
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z" fill="currentColor"/></svg>
-          <input id="peerFilter" type="text" placeholder="Filter peers…" />
-        </label>
-        <div class="row right gap-2">
-          <button id="refreshPairs" class="btn ghost" title="Reload paired devices">Refresh</button>
-          <button id="logoutBtnLegacy" class="btn danger" title="Log out">Logout</button>
-        </div>
-        
+          <div class="grow"></div>
+          <label class="input" aria-label="Filter peers">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"
+                fill="currentColor"
+              />
+            </svg>
+            <input id="peerFilter" type="text" placeholder="Filter peers…" />
+          </label>
+          <div class="row right gap-2">
+            <button
+              id="refreshPairs"
+              class="btn ghost"
+              title="Reload paired devices"
+            >
+              Refresh
+            </button>
+            <button id="logoutBtnLegacy" class="btn danger" title="Log out">
+              Logout
+            </button>
+          </div>
+
           <div class="title">Interface Control Module</div>
         </div>
         <nav class="nav">
@@ -108,7 +121,46 @@
               id="palette"
               class="palette scrollable"
               aria-label="Drag items into the chain"
-            ></div>
+            >
+              <!-- ===== Emulator Palette Templates (SEMUX / REMUX) ===== -->
+              <!-- Wrap of one emulator MAC (non-draggable parent + its channel list) -->
+              <template id="tplEmuBlock">
+                <div class="emu-block" data-mac="" data-type="">
+                  <!-- Parent pill: not draggable; toggles channel list -->
+                  <button
+                    type="button"
+                    class="pill parent-pill"
+                    aria-expanded="false"
+                  >
+                    <span class="tag">EMU</span>
+                    <span class="title mono">AA:BB:CC:DD:EE:FF</span>
+                    <span class="spacer"></span>
+                    <span class="count" aria-label="available / total"
+                      >0/0</span
+                    >
+                    <span class="chev" aria-hidden="true">▾</span>
+                  </button>
+                  <!-- Collapsible list of per-channel draggable items -->
+                  <div class="emu-channels" hidden></div>
+                </div>
+              </template>
+
+              <!-- One draggable channel item for a SEMUX/REMUX parent -->
+              <template id="tplEmuChan">
+                <button
+                  type="button"
+                  class="emu-chan"
+                  draggable="true"
+                  data-mac=""
+                  data-vtype=""
+                  data-vindex=""
+                  aria-label="Emulator channel"
+                >
+                  <span class="tag">SMU</span>
+                  <span class="label">SMU #1 / 8</span>
+                </button>
+              </template>
+            </div>
           </section>
 
           <!-- MIDDLE: Chain Builder -->
@@ -165,55 +217,62 @@
               </div>
 
               <!-- SENSOR panel -->
-              <div id="panelSensor" class="kv lg" hidden>
+              <div id="panelSensor" class="kv lg sensor-panel" hidden>
                 <label>Sensor</label>
 
-                <div class="row smallgap g-row">
-                  <div class="gauge" id="gSensTemp" data-unit="°C"></div>
-                  <div class="kv">
-                    <label>Status</label>
-                    <div id="siSensStatus">—</div>
+                <div class="sensor-grid">
+                  <!-- Left: Temperature gauge -->
+                  <div class="kv metric metric-gauge">
+                    <div class="metric-title">Temperature</div>
+                    <div class="gauge" id="gSensTemp" data-unit="°C"></div>
                   </div>
-                </div>
 
-                <!-- Day/Night pill -->
-                <div class="row smallgap">
-                  <div class="kv">
-                    <label>Day/Night</label>
-                    <div id="siDN" class="dn-pill">—</div>
-                  </div>
-                </div>
+                  <!-- Right: Status + Day/Night -->
+                  <div class="kv metric metric-status">
+                    <div class="row smallgap">
+                      <div class="kv mini">
+                        <label>Status</label>
+                        <div id="siSensStatus" class="value">—</div>
+                      </div>
+                      <div class="kv mini">
+                        <label>Day/Night</label>
+                        <div id="siDN" class="dn-pill">—</div>
+                      </div>
+                    </div>
 
-                <!-- NEW: Environment row -->
-                <div class="row smallgap">
-                  <div class="kv">
-                    <label>Humidity</label>
-                    <div id="siHum">—</div>
-                  </div>
-                  <div class="kv">
-                    <label>Pressure</label>
-                    <div id="siPress">—</div>
-                  </div>
-                  <div class="kv">
-                    <label>Lux</label>
-                    <div id="siLux">—</div>
-                  </div>
-                </div>
+                    <div class="row smallgap">
+                      <div class="kv mini">
+                        <label>Humidity</label>
+                        <div id="siHum" class="value">—</div>
+                      </div>
+                      <div class="kv mini">
+                        <label>Pressure</label>
+                        <div id="siPress" class="value">—</div>
+                      </div>
+                      <div class="kv mini">
+                        <label>Lux</label>
+                        <div id="siLux" class="value">—</div>
+                      </div>
+                    </div>
 
-                <!-- NEW: TF-Luna raw row -->
-                <div class="row smallgap">
-                  <div class="kv">
-                    <label>TF-Luna A</label>
-                    <div id="siTfA">—</div>
-                  </div>
-                  <div class="kv">
-                    <label>TF-Luna B</label>
-                    <div id="siTfB">—</div>
+                    <div class="row smallgap">
+                      <div class="kv mini">
+                        <label>TF-Luna A</label>
+                        <div id="siTfA" class="value">—</div>
+                      </div>
+                      <div class="kv mini">
+                        <label>TF-Luna B</label>
+                        <div id="siTfB" class="value">—</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div class="controls">
                   <button id="tLive" class="btn">Live (1s)</button>
+                  <button id="btnSensorSettings" class="btn secondary">
+                    Settings
+                  </button>
                 </div>
               </div>
 
@@ -230,6 +289,9 @@
                 <div class="controls">
                   <button id="tOn" class="btn">ON</button>
                   <button id="tOff" class="btn">OFF</button>
+                  <button id="btnRelaySettings" class="btn secondary">
+                    Settings
+                  </button>
                 </div>
               </div>
 
@@ -244,6 +306,9 @@
                 <div class="controls">
                   <button id="pwrOn" class="btn">Power ON</button>
                   <button id="pwrOff" class="btn danger">Power OFF</button>
+                  <button id="btnPmsSettings" class="btn secondary">
+                    Settings
+                  </button>
                 </div>
                 <div class="sub">
                   Power modules are required but are not placed in the chain.
@@ -283,30 +348,647 @@
           <!-- BOTTOM MIDDLE: Pair / Remove -->
           <section class="card card-pair">
             <header><h3>Pair / Remove</h3></header>
+
             <div class="pair-body scrollable">
+              <!-- Pair New -->
               <div class="kv">
                 <label>Pair New (type + MAC)</label>
-                <div class="row">
+                <div class="form-row">
                   <select id="pType">
                     <option value="power">Power</option>
                     <option value="relay">Relay</option>
                     <option value="sensor">Sensor</option>
-                    <option value="entrance">Entrance</option>
-                    <option value="parking">Parking</option>
+                    <option value="semux">Sensor Emulator (SEMUX)</option>
+                    <option value="remux">Relay Emulator (REMUX)</option>
                   </select>
+                  <input
+                    id="pMac"
+                    type="text"
+                    placeholder="AA:BB:CC:DD:EE:FF"
+                  />
+                  <button id="btnPair" class="btn">Pair</button>
                 </div>
-                <input id="pMac" type="text" placeholder="AA:BB:CC:DD:EE:FF" />
-                <button id="btnPair" class="btn">Pair</button>
               </div>
 
+              <!-- Remove by MAC -->
               <div class="kv">
                 <label>Remove by MAC</label>
-                <input id="rMac" type="text" placeholder="AA:BB:CC:DD:EE:FF" />
-                <button id="btnRemove" class="btn danger">Remove</button>
+                <div class="form-row">
+                  <input
+                    id="rMac"
+                    type="text"
+                    placeholder="AA:BB:CC:DD:EE:FF"
+                  />
+                  <button id="btnRemove" class="btn danger">Remove</button>
+                </div>
               </div>
             </div>
           </section>
         </div>
+      </div>
+    </div>
+
+    <!-- Sensor Settings Modal -->
+    <div id="sensorSettingsModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+
+      <div
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sensorSettingsTitle"
+      >
+        <header class="modal-header">
+          <h3 id="sensorSettingsTitle">🌡️ Sensor Module Settings</h3>
+          <button class="icon-btn" id="sensorSettingsClose" aria-label="Close">
+            ✕
+          </button>
+        </header>
+
+        <form id="sensorSettingsForm" class="modal-body">
+          <div class="settings">
+            <!-- Common -->
+            <div class="settings-section">
+              <div class="section-title">Common</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label>Device ID</label>
+                  <div id="ss_devid" class="value mono">—</div>
+                </div>
+                <div class="kv mini">
+                  <label for="ss_name">Device Name</label>
+                  <input
+                    id="ss_name"
+                    name="name"
+                    type="text"
+                    placeholder="Human-readable name"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_log">Log Level</label>
+                  <select id="ss_log" name="log_level">
+                    <option value="NONE">NONE</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="ss_auto">Auto Restart on Fault</label>
+                  <select id="ss_auto" name="auto_restart">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="ss_led">LED Mode</label>
+                  <select id="ss_led" name="led_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="QUIET">QUIET</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label>Firmware Update</label>
+                  <button id="ss_fw" class="btn warn">Update Firmware</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- General -->
+            <div class="settings-section">
+              <div class="section-title">General</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="ss_report">Report Interval (ms)</label>
+                  <input
+                    id="ss_report"
+                    name="report_interval"
+                    type="number"
+                    min="250"
+                    step="250"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_time">Time Sync</label>
+                  <input id="ss_time" name="time_sync" type="datetime-local" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Detection & Environment -->
+            <div class="settings-section">
+              <div class="section-title">Detection &amp; Environment</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="ss_tf_a">TF-Luna Threshold A (cm)</label>
+                  <input
+                    id="ss_tf_a"
+                    name="tf_luna_threshold_A"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_tf_b">TF-Luna Threshold B (cm)</label>
+                  <input
+                    id="ss_tf_b"
+                    name="tf_luna_threshold_B"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_dn">Day/Night Threshold (Lux)</label>
+                  <input
+                    id="ss_dn"
+                    name="day_night_threshold"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_trigger">Trigger Mode</label>
+                  <select id="ss_trigger" name="trigger_mode">
+                    <option value="TOGGLE">TOGGLE</option>
+                    <option value="MOMENTARY">MOMENTARY</option>
+                    <option value="HOLD">HOLD</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="ss_fan">Fan Mode</label>
+                  <select id="ss_fan" name="fan_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="ON">ON</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="ss_buzzer">Buzzer Enabled</label>
+                  <select id="ss_buzzer" name="buzzer_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Calibration -->
+            <div class="settings-section">
+              <div class="section-title">Calibration</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="ss_temp_cal">Temperature Calibration (°C)</label>
+                  <input
+                    id="ss_temp_cal"
+                    name="temperature_calibration"
+                    type="number"
+                    step="0.1"
+                    inputmode="decimal"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_press_off">Pressure Offset (hPa)</label>
+                  <input
+                    id="ss_press_off"
+                    name="pressure_offset"
+                    type="number"
+                    step="0.1"
+                    inputmode="decimal"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <footer class="modal-footer">
+          <button class="btn" id="sensorSettingsCancel">Cancel</button>
+          <button class="btn primary" id="sensorSettingsSave">Save</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Relay Settings Modal -->
+    <div id="relaySettingsModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+
+      <div
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="relaySettingsTitle"
+      >
+        <header class="modal-header">
+          <h3 id="relaySettingsTitle">🔌 Relay Module Settings</h3>
+          <button class="icon-btn" id="relaySettingsClose" aria-label="Close">
+            ✕
+          </button>
+        </header>
+
+        <form id="relaySettingsForm" class="modal-body">
+          <div class="settings">
+            <!-- Common -->
+            <div class="settings-section">
+              <div class="section-title">Common</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label>Device ID</label>
+                  <div id="rl_devid" class="value mono">—</div>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_name">Device Name</label>
+                  <input
+                    id="rl_name"
+                    name="name"
+                    type="text"
+                    placeholder="Module identifier"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="rl_log">Log Level</label>
+                  <select id="rl_log" name="log_level">
+                    <option value="NONE">NONE</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_auto">Auto Restart on Fault</label>
+                  <select id="rl_auto" name="auto_restart">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_led">LED Mode</label>
+                  <select id="rl_led" name="led_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="QUIET">QUIET</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label>Firmware Update</label>
+                  <button id="rl_fw" class="btn warn">Update Firmware</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- General -->
+            <div class="settings-section">
+              <div class="section-title">General</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="rl_mode">Relay Mode</label>
+                  <select id="rl_mode" name="relay_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="MANUAL">MANUAL</option>
+                    <option value="FOLLOW_SENSOR">FOLLOW_SENSOR</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_pulse">Pulse Duration (ms)</label>
+                  <input
+                    id="rl_pulse"
+                    name="pulse_duration"
+                    type="number"
+                    min="10"
+                    step="10"
+                    inputmode="numeric"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="rl_time">Time Sync</label>
+                  <input id="rl_time" name="time_sync" type="datetime-local" />
+                </div>
+              </div>
+            </div>
+
+            <!-- I/O & Feedback -->
+            <div class="settings-section">
+              <div class="section-title">I/O &amp; Feedback</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="rl_r1">Relay 1 State</label>
+                  <select id="rl_r1" name="relay_1_state">
+                    <option value="true">ON</option>
+                    <option value="false">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_r2">Relay 2 State</label>
+                  <select id="rl_r2" name="relay_2_state">
+                    <option value="true">ON</option>
+                    <option value="false">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_fan">Fan Mode</label>
+                  <select id="rl_fan" name="fan_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="ON">ON</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_buzz">Buzzer Enabled</label>
+                  <select id="rl_buzz" name="buzzer_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="rl_tlimit">Temperature Limit (°C)</label>
+                  <input
+                    id="rl_tlimit"
+                    name="temperature_limit"
+                    type="number"
+                    step="0.5"
+                    inputmode="decimal"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <footer class="modal-footer">
+          <button class="btn" id="relaySettingsCancel">Cancel</button>
+          <button class="btn primary" id="relaySettingsSave">Save</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- PMS Settings Modal -->
+    <div id="pmsSettingsModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+
+      <div
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pmsSettingsTitle"
+      >
+        <header class="modal-header">
+          <h3 id="pmsSettingsTitle">⚡️ PMS – Power Management System</h3>
+          <button class="icon-btn" id="pmsSettingsClose" aria-label="Close">
+            ✕
+          </button>
+        </header>
+
+        <form id="pmsSettingsForm" class="modal-body">
+          <div class="settings">
+            <!-- Common -->
+            <div class="settings-section">
+              <div class="section-title">Common</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label>Device ID</label>
+                  <div id="pms_devid" class="value mono">—</div>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_name">Device Name</label>
+                  <input
+                    id="pms_name"
+                    name="name"
+                    type="text"
+                    placeholder="Device name"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="pms_log">Log Level</label>
+                  <select id="pms_log" name="log_level">
+                    <option value="NONE">NONE</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_auto">Auto Restart on Fault</label>
+                  <select id="pms_auto" name="auto_restart">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_led">LED Mode</label>
+                  <select id="pms_led" name="led_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="QUIET">QUIET</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label>Firmware Update</label>
+                  <button id="pms_fw" class="btn warn">Update Firmware</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- General -->
+            <div class="settings-section">
+              <div class="section-title">General</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="pms_mode">Power Mode</label>
+                  <select id="pms_mode" name="power_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="WALL">WALL</option>
+                    <option value="BATTERY">BATTERY</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_fan">Fan Mode</label>
+                  <select id="pms_fan" name="fan_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="ECO">ECO</option>
+                    <option value="FULL">FULL</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_buzz">Buzzer</label>
+                  <select id="pms_buzz" name="buzzer_enabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="pms_time">Time Sync</label>
+                  <input id="pms_time" name="time_sync" type="datetime-local" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Outputs -->
+            <div class="settings-section">
+              <div class="section-title">Outputs</div>
+              <div class="settings-grid">
+                <div class="kv mini full">
+                  <div class="row inline">
+                    <label class="chk"
+                      ><input id="pms_r1" type="checkbox" /> R1</label
+                    >
+                    <label class="chk"
+                      ><input id="pms_r2" type="checkbox" /> R2</label
+                    >
+                    <label class="chk"
+                      ><input id="pms_r3" type="checkbox" /> R3</label
+                    >
+                    <label class="chk"
+                      ><input id="pms_r4" type="checkbox" /> R4</label
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Safety & Calibration -->
+            <div class="settings-section">
+              <div class="section-title">Safety &amp; Calibration</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="pms_tlimit">Temperature Limit (°C)</label>
+                  <input
+                    id="pms_tlimit"
+                    name="temperature_limit"
+                    type="number"
+                    step="0.5"
+                    inputmode="decimal"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="pms_vcal">Voltage Calibration (ΔV)</label>
+                  <input
+                    id="pms_vcal"
+                    name="voltage_calibration"
+                    type="number"
+                    step="0.01"
+                    inputmode="decimal"
+                    placeholder="+/-"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="pms_ical">Current Calibration (ΔA)</label>
+                  <input
+                    id="pms_ical"
+                    name="current_calibration"
+                    type="number"
+                    step="0.01"
+                    inputmode="decimal"
+                    placeholder="+/-"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <footer class="modal-footer">
+          <button class="btn" id="pmsSettingsCancel">Cancel</button>
+          <button class="btn warn" id="pmsSettingsReset">Reset</button>
+          <button class="btn primary" id="pmsSettingsSave">Save</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Emulator Settings Modal (adapts to SEMUX/REMUX) -->
+    <div id="emuSettingsModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+      <div
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="emuSettingsTitle"
+      >
+        <header class="modal-header">
+          <h3 id="emuSettingsTitle">🧪 Emulator Settings</h3>
+          <button class="icon-btn" id="emuSettingsClose" aria-label="Close">
+            ✕
+          </button>
+        </header>
+
+        <form id="emuSettingsForm" class="modal-body">
+          <div class="settings">
+            <!-- Will be built dynamically via JS based on type (SEMUX/REMUX) -->
+            <div class="settings-section">
+              <div class="section-title">Common</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label>Device ID</label>
+                  <div id="emu_devid" class="value mono">—</div>
+                </div>
+                <div class="kv mini">
+                  <label for="emu_name">Device Name</label>
+                  <input
+                    id="emu_name"
+                    name="name"
+                    type="text"
+                    placeholder="Emulator label"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="emu_log">Log Level</label>
+                  <select id="emu_log" name="log_level">
+                    <option value="NONE">NONE</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="emu_auto">Auto Restart on Fault</label>
+                  <select id="emu_auto" name="auto_restart">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label for="emu_led">LED Mode</label>
+                  <select id="emu_led" name="led_mode">
+                    <option value="AUTO">AUTO</option>
+                    <option value="QUIET">QUIET</option>
+                    <option value="OFF">OFF</option>
+                  </select>
+                </div>
+                <div class="kv mini">
+                  <label>Firmware Update</label>
+                  <button id="emu_fw" class="btn warn">Update Firmware</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="emu_type_section" class="settings-section">
+              <!-- Title + base fields for SEMUX/REMUX injected by JS -->
+              <div class="section-title" id="emu_type_title">Type</div>
+              <div class="settings-grid" id="emu_type_grid"></div>
+            </div>
+
+            <div id="emu_virtual_section" class="settings-section">
+              <div class="section-title" id="emu_virt_title">
+                Virtual Elements
+              </div>
+              <div class="settings-grid" id="emu_virtual_grid">
+                <!-- Per-virtual rows auto-generated by JS -->
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <footer class="modal-footer">
+          <button class="btn" id="emuSettingsCancel">Cancel</button>
+          <button class="btn primary" id="emuSettingsSave">Save</button>
+        </footer>
       </div>
     </div>
 
