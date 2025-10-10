@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ICM · Networking</title>
+    <!-- Reuse the same base styles as topology -->
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/topology.css" />
+    <!-- Page-specific tweaks -->
+    <link rel="stylesheet" href="css/wifi.css" />
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <div class="frame">
+      <!-- Topbar (copied to match Topology) -->
+      <div class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" aria-label="Network">
+              <circle cx="6" cy="12" r="2"></circle>
+              <circle cx="12" cy="6" r="2"></circle>
+              <circle cx="18" cy="12" r="2"></circle>
+              <path
+                d="M8 12 L10 12 L12 8 L16 8 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M14 12 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="grow"></div>
+          <label class="input" aria-label="Filter peers">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"
+                fill="currentColor"
+              />
+            </svg>
+            <input id="peerFilter" type="text" placeholder="Filter peers…" />
+          </label>
+          <div class="row right gap-2">
+            <button
+              id="refreshPairs"
+              class="btn ghost"
+              title="Reload paired devices"
+            >
+              Refresh
+            </button>
+            <button id="logoutBtnLegacy" class="btn danger" title="Log out">
+              Logout
+            </button>
+          </div>
+          <div class="title">Interface Control Module</div>
+        </div>
+        <nav class="nav">
+          <a href="/data/home.html">Home</a>
+          <a href="/data/settings.html">Settings</a>
+          <a href="/data/wifi.html" class="active">Networking</a>
+          <a href="/data/topology.html">Topology</a>
+        </nav>
+        <div class="logout">
+          <button id="logoutBtn">Logout</button>
+        </div>
+      </div>
+
+      <!-- Hero -->
+      <div class="hero-card">
+        <svg
+          class="home-hero"
+          viewBox="0 0 24 24"
+          width="56"
+          height="56"
+          aria-hidden="true"
+        >
+          <circle cx="6" cy="12" r="2"></circle>
+          <circle cx="12" cy="6" r="2"></circle>
+          <circle cx="18" cy="12" r="2"></circle>
+          <path
+            d="M8 12 L10 12 L12 8 L16 8 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M14 12 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <div class="hero-text">
+          <h2>Networking</h2>
+          <p>Configure Wi‑Fi (STA & AP), ESP‑NOW channel, and BLE identity.</p>
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="wrap">
+        <div class="grid net-grid">
+          <!-- SETTINGS CARD -->
+          <section class="card">
+            <header>
+              <h3>Network Settings</h3>
+              <span class="badge badge-info">Device</span>
+            </header>
+
+            <form id="netForm" class="settings">
+              <!-- Wi‑Fi Station (STA) -->
+              <div class="settings-section">
+                <div class="section-title">Wi‑Fi Station (STA)</div>
+                <div class="settings-grid">
+                  <div class="kv mini">
+                    <label for="sta_ssid">STA SSID</label>
+                    <input
+                      id="sta_ssid"
+                      name="sta_ssid"
+                      type="text"
+                      placeholder="your-router-ssid"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="sta_pass">STA Password</label>
+                    <div class="pw-wrap">
+                      <input
+                        id="sta_pass"
+                        name="sta_pass"
+                        type="password"
+                        placeholder="••••••••"
+                        autocomplete="off"
+                      />
+                      <button
+                        type="button"
+                        class="icon-btn pw-toggle"
+                        data-target="sta_pass"
+                        aria-label="Show/Hide"
+                      >
+                        👁
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Wi‑Fi Access Point (AP) -->
+              <div class="settings-section">
+                <div class="section-title">Wi‑Fi Access Point (AP)</div>
+                <div class="settings-grid">
+                  <div class="kv mini">
+                    <label for="ap_ssid">AP SSID</label>
+                    <input
+                      id="ap_ssid"
+                      name="ap_ssid"
+                      type="text"
+                      placeholder="ICM_AP"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="ap_pass">AP Password</label>
+                    <div class="pw-wrap">
+                      <input
+                        id="ap_pass"
+                        name="ap_pass"
+                        type="password"
+                        placeholder="min 8 chars"
+                        autocomplete="off"
+                      />
+                      <button
+                        type="button"
+                        class="icon-btn pw-toggle"
+                        data-target="ap_pass"
+                        aria-label="Show/Hide"
+                      >
+                        👁
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ESP‑NOW + BLE -->
+              <div class="settings-section">
+                <div class="section-title">ESP‑NOW & BLE</div>
+                <div class="settings-grid">
+                  <div class="kv mini">
+                    <label for="espnow_channel">ESP‑NOW Channel</label>
+                    <input
+                      id="espnow_channel"
+                      name="espnow_channel"
+                      type="number"
+                      min="1"
+                      max="13"
+                      step="1"
+                      inputmode="numeric"
+                      placeholder="1..13"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="ble_name">BLE Name</label>
+                    <input
+                      id="ble_name"
+                      name="ble_name"
+                      type="text"
+                      placeholder="ICM"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="ble_pin">BLE 6‑digit PIN</label>
+                    <input
+                      id="ble_pin"
+                      name="ble_pin"
+                      type="text"
+                      inputmode="numeric"
+                      pattern="\d{6}"
+                      maxlength="6"
+                      placeholder="000000"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Actions -->
+              <div class="row smallgap actions-row">
+                <button id="btnSave" class="btn">Save</button>
+                <button id="btnReload" class="btn">Reload Config</button>
+                <button id="btnFactory" class="btn danger">
+                  Factory Reset
+                </button>
+              </div>
+            </form>
+
+            <div id="toast" class="toast" hidden>Done</div>
+          </section>
+
+          <!-- HELP CARD -->
+          <section class="card">
+            <header>
+              <h3>Notes</h3>
+              <span class="badge">Info</span>
+            </header>
+            <div class="kv">
+              <label>Tips</label>
+              <div class="value">
+                • STA connects to your router. AP hosts a local hotspot for
+                setup.<br />
+                • ESP‑NOW channel must match all peers (1–13).<br />
+                • BLE PIN must be exactly 6 digits.<br />
+                • Use Reload to re-apply saved config without rebooting (if
+                supported).<br />
+                • Factory Reset restores network defaults.
+              </div>
+            </div>
+          </section>
+          <!-- VISUALIZATION / STATUS CARD -->
+          <section class="card status-card">
+            <header>
+              <h3>Status</h3>
+              <span id="netBadge" class="badge">OFF</span>
+            </header>
+
+            <div class="viz-grid">
+              <div class="kv">
+                <label>Mode</label>
+                <div class="value">
+                  <span id="netMode" class="mono">—</span>
+                </div>
+              </div>
+
+              <div class="kv">
+                <label>IP</label>
+                <div id="netIp" class="value mono">—</div>
+              </div>
+
+              <div class="kv">
+                <label>RSSI</label>
+                <div id="netRssi" class="value mono">—</div>
+              </div>
+
+              <div class="kv">
+                <label>ESP-NOW CH</label>
+                <div id="netCh" class="value mono">—</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script src="js/wifi.js"></script>
+  </body>
+</html>

@@ -31,7 +31,7 @@
   const LS_LINKS = "icm_mock_links";
   const LS_SEQ = "icm_mock_seq";
   const LS_VER = "icm_mock_version";
-  const VERSION = "v5";
+  const VERSION = "v10";
 
   // ----- Type helpers -----
   function normalizeTypeIn(type) {
@@ -430,11 +430,11 @@
 
       const tempC = 18 + rnd() * 12; // 18–30 °C
       const humidity = 30 + rnd() * 60; // 30–90 %
-      const pressure_hPa = 990 + rnd() * 40; // 990–1030 hPa
+      const pressure_hPa = 500 + rnd() * 40; // 990–1030 hPa
       const luxMax = isDayGuess ? 1800 : 80; // brighter in daytime
       const lux = Math.round(rnd() * luxMax); // 0–(80 or 1800) lx
-      const tf_a = 200 + Math.round(rnd() * 3000); // 200–3200 mm
-      const tf_b = 200 + Math.round(rnd() * 3000); // 200–3200 mm
+      const tf_a = 200 + Math.round(rnd() * 300); // 200–3200 mm
+      const tf_b = 200 + Math.round(rnd() * 300); // 200–3200 mm
 
       return respond({
         ok: true,

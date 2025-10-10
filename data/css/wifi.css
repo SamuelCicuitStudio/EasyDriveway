@@ -1,0 +1,123 @@
+/* wifi.css — page-scoped styles optimized to rely on topology.css
+   - Removes duplicate base styles; keeps only Networking page tweaks
+   - Low specificity via :where() to prevent cascade fights
+   - Responsive grids; minimal overrides; matches dark neon topology theme
+*/
+
+:root {
+  --wifi-gap: 10px;
+}
+
+/* ===== Layout: split main column + notes, stack on smaller widths ===== */
+.net-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 6px;
+  height: 100%;
+}
+@media (max-width: 1180px) {
+  .net-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Sections ===== */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wifi-gap);
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #cfe2ff;
+  opacity: 0.9;
+}
+
+/* ===== Inputs grid for STA/AP/ESP-NOW/BLE blocks ===== */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+@media (max-width: 1180px) {
+  .settings-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Stretch inputs inside compact kv blocks */
+.kv.mini :where(input, select, textarea) {
+  width: 100%;
+}
+
+/* ===== Password eye toggle ===== */
+.pw-wrap {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.icon-btn {
+  border: 1px solid var(--line);
+  background: #0d1424;
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+.icon-btn:hover {
+  background: #101a2f;
+}
+
+/* ===== Form actions ===== */
+.actions-row {
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ===== Validation highlight ===== */
+input.invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(255, 90, 107, 0.15);
+}
+
+/* ===== Toast (use topology styling; just position) ===== */
+.toast {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Visualization card layout */
+.status-card .viz-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+@media (max-width: 720px) {
+  .status-card .viz-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.95;
+}
+.status-card header .badge {
+  margin-left: 6px;
+}
