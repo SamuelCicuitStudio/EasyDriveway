@@ -650,28 +650,190 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
-  async function loadRelaySettings(macFromClick) {
-    const form = document.getElementById("relaySettingsForm");
+  // =================== SENSOR: SAVE (supports SEMUX) ===================
+  async function saveSensorSettings() {
+    const form = document.getElementById("sensorSettingsForm");
+    const ctx = getSensorCtx();
+    const mac = ctx?.mac;
+    if (!form || !mac) {
+      showToast("Select a sensor first");
+      return;
+    }
+    const isEMU = ctx?.emuType === "SEMUX";
+
+    // Build config object from form (shared for both real & emu)
+    const baseCfg = {
+      name: (form.ss_name?.value || "").trim(),
+      tf_luna_threshold_A: Number(form.ss_tf_a?.value || 0),
+      tf_luna_threshold_B: Number(form.ss_tf_b?.value || 0),
+      day_night_threshold: Number(form.ss_dn?.value || 0),
+      trigger_mode: String(form.ss_trigger?.value || "TOGGLE"),
+      fan_mode: String(form.ss_fan?.value || "AUTO"),
+      buzzer_enabled: (form.ss_buzzer?.value || "false") === "true",
+      report_interval: Math.max(250, Number(form.ss_report?.value || 1000)),
+      time_sync: form.ss_time?.value
+        ? new Date(form.ss_time.value).toISOString()
+        : "",
+      temperature_calibration: Number(form.ss_temp_cal?.value || 0),
+      pressure_offset: Number(form.ss_press_off?.value || 0),
+      log_level: String(form.ss_log?.value || "INFO"),
+      auto_restart: (form.ss_auto?.value || "false") === "true",
+      led_mode: String(form.ss_led?.value || "AUTO"),
+    };
+
+    if (isEMU) {
+      // Emulator-only fields (shared across all SEMUX channels for this MAC)
+      baseCfg.sensor_count = Math.max(
+        1,
+        Number(document.getElementById("ss_count")?.value || 8)
+      );
+      baseCfg.emulation_mode = String(
+        document.getElementById("ss_mode")?.value || "STATIC"
+      );
+
+      // Persist locally under SEMUX key
+      try {
+        localStorage.setItem("icm_semux_cfg_" + mac, JSON.stringify(baseCfg));
+      } catch {}
+      clearDraft("sensor", mac);
+      closeSensorSettings();
+      renderPalette(); // if counts changed → refresh dropdown availability
+      showToast("SEMUX settings saved");
+      return;
+    }
+
+    // Real sensor: try backend, then local fallback
+    let ok = false;
+    try {
+      const r = await fetch("/api/sensor/settings/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mac, cfg: baseCfg }),
+      });
+      ok = r.ok;
+    } catch {}
+    try {
+      localStorage.setItem("icm_sensor_cfg_" + mac, JSON.stringify(baseCfg));
+      if (!ok) ok = true;
+    } catch {}
+    showToast(ok ? "Settings saved" : "Save failed");
+    if (ok) {
+      clearDraft("sensor", mac);
+      closeSensorSettings();
+    }
+  }
+
+  // =================== SENSOR: LOAD (supports SEMUX) ===================
+  async function loadSensorSettings(macFromClick) {
+    const form = document.getElementById("sensorSettingsForm");
     if (!form) return;
 
-    const ctx = getRelayCtx();
+    const ctx = getSensorCtx(); // { mac, emuType: 'SEMUX'|null, vIndex }
     const mac = macFormatColon(macFromClick || ctx?.mac || "");
-    const isEMU = ctx?.emuType === "REMUX";
-    const idx = Number.isInteger(ctx?.vIndex) ? ctx.vIndex : 0;
+    const isEMU = ctx?.emuType === "SEMUX";
 
-    // Toggle emulator-only UI
-    if (ctx?.emuType === "REMUX") form.dataset.emu = "remux";
+    // Toggle emulator-only UI (modal only)
+    if (isEMU) form.dataset.emu = "semux";
     else form.removeAttribute("data-emu");
 
     let cfg = null;
 
     if (isEMU) {
+      // SEMUX: shared settings per parent MAC
+      try {
+        cfg = JSON.parse(
+          localStorage.getItem("icm_semux_cfg_" + mac) || "null"
+        );
+      } catch {}
+      cfg = {
+        ...(typeof semuxDefaults === "object" ? semuxDefaults : {}),
+        ...(cfg || {}),
+      };
+    } else {
+      // Real sensor: backend then local
+      try {
+        const r = await fetch("/api/sensor/settings/get", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mac }),
+        });
+        if (r.ok) cfg = await r.json();
+      } catch {}
+      if (!cfg) {
+        try {
+          cfg = JSON.parse(
+            localStorage.getItem("icm_sensor_cfg_" + mac) || "null"
+          );
+        } catch {}
+      }
+      cfg = {
+        ...(typeof sensorDefaults === "object" ? sensorDefaults : {}),
+        ...(cfg || {}),
+      };
+    }
+
+    // Overlay any draft (same MAC key)
+    const draft = readDraft("sensor", mac);
+    if (draft) cfg = { ...cfg, ...draft };
+
+    // Common fields
+    if (form.ss_name) form.ss_name.value = cfg.name ?? "";
+    if (form.ss_tf_a) form.ss_tf_a.value = cfg.tf_luna_threshold_A ?? 80;
+    if (form.ss_tf_b) form.ss_tf_b.value = cfg.tf_luna_threshold_B ?? 120;
+    if (form.ss_dn) form.ss_dn.value = cfg.day_night_threshold ?? 50;
+    if (form.ss_trigger) form.ss_trigger.value = cfg.trigger_mode ?? "TOGGLE";
+    if (form.ss_fan) form.ss_fan.value = cfg.fan_mode ?? "AUTO";
+    if (form.ss_buzzer) form.ss_buzzer.value = String(!!cfg.buzzer_enabled);
+    if (form.ss_report) form.ss_report.value = cfg.report_interval ?? 1000;
+    if (form.ss_time)
+      form.ss_time.value = cfg.time_sync ? cfg.time_sync.slice(0, 19) : "";
+    if (form.ss_temp_cal)
+      form.ss_temp_cal.value = cfg.temperature_calibration ?? 0;
+    if (form.ss_press_off) form.ss_press_off.value = cfg.pressure_offset ?? 0;
+
+    // Common meta
+    const idEl = form.querySelector("#ss_devid");
+    if (idEl) idEl.textContent = cfg.device_id || "—";
+    if (form.ss_log) form.ss_log.value = cfg.log_level ?? "INFO";
+    if (form.ss_auto) form.ss_auto.value = String(!!cfg.auto_restart);
+    if (form.ss_led) form.ss_led.value = cfg.led_mode ?? "AUTO";
+
+    // Emulator-only extras for SEMUX
+    if (isEMU) {
+      const cEl = document.getElementById("ss_count");
+      const mEl = document.getElementById("ss_mode");
+      if (cEl) cEl.value = cfg.sensor_count ?? 8;
+      if (mEl) mEl.value = cfg.emulation_mode ?? "STATIC";
+    }
+  }
+
+  // =================== RELAY: LOAD (supports REMUX) ===================
+  async function loadRelaySettings(macFromClick) {
+    const form = document.getElementById("relaySettingsForm");
+    if (!form) return;
+
+    const ctx = getRelayCtx(); // { mac, emuType:'REMUX'|null, vIndex }
+    const mac = macFormatColon(macFromClick || ctx?.mac || "");
+    const isEMU = ctx?.emuType === "REMUX";
+    const idx = Number.isInteger(ctx?.vIndex) ? ctx.vIndex : 0;
+
+    // Toggle emulator-only UI (modal only)
+    if (isEMU) form.dataset.emu = "remux";
+    else form.removeAttribute("data-emu");
+
+    let cfg = null;
+
+    if (isEMU) {
+      // REMUX: shared + per-channel arrays
       try {
         cfg = JSON.parse(
           localStorage.getItem("icm_remux_cfg_" + mac) || "null"
         );
       } catch {}
-      cfg = { ...remuxDefaults, ...(cfg || {}) };
+      cfg = {
+        ...(typeof remuxDefaults === "object" ? remuxDefaults : {}),
+        ...(cfg || {}),
+      };
 
       // Ensure arrays sized to relay_count
       const N = Math.max(1, Number(cfg.relay_count || 16));
@@ -684,32 +846,35 @@
       cfg.relay_mode = ensureLen(cfg.relay_mode, "AUTO");
       cfg.pulse_duration = ensureLen(cfg.pulse_duration, 200);
 
-      // Fill form (shared)
-      form.rl_name.value = cfg.name ?? "";
-      form.rl_mode.value = cfg.relay_mode[idx] ?? "AUTO";
-      form.rl_fan.value = cfg.fan_mode ?? "AUTO";
-      form.rl_buzz.value = String(!!cfg.buzzer_enabled);
-      form.rl_pulse.value = cfg.pulse_duration[idx] ?? 200;
-      form.rl_time.value = cfg.time_sync ? cfg.time_sync.slice(0, 19) : "";
-      form.rl_tlimit.value = cfg.temperature_limit ?? 70;
+      // Fill form (shared/common)
+      if (form.rl_name) form.rl_name.value = cfg.name ?? "";
+      if (form.rl_fan) form.rl_fan.value = cfg.fan_mode ?? "AUTO";
+      if (form.rl_buzz) form.rl_buzz.value = String(!!cfg.buzzer_enabled);
+      if (form.rl_time)
+        form.rl_time.value = cfg.time_sync ? cfg.time_sync.slice(0, 19) : "";
+      if (form.rl_tlimit) form.rl_tlimit.value = cfg.temperature_limit ?? 70;
+
+      // Per-channel fields – focus on the selected index
+      if (form.rl_mode) form.rl_mode.value = cfg.relay_mode[idx] ?? "AUTO";
+      if (form.rl_pulse) form.rl_pulse.value = cfg.pulse_duration[idx] ?? 200;
 
       // Meta / emulator-only
-      form.querySelector("#rl_devid").textContent = cfg.device_id || "—";
-      form.rl_log.value = cfg.log_level ?? "INFO";
-      form.rl_auto.value = String(!!cfg.auto_restart);
-      form.rl_led.value = cfg.led_mode ?? "AUTO";
+      const dev = form.querySelector("#rl_devid");
+      if (dev) dev.textContent = cfg.device_id || "—";
+      if (form.rl_log) form.rl_log.value = cfg.log_level ?? "INFO";
+      if (form.rl_auto) form.rl_auto.value = String(!!cfg.auto_restart);
+      if (form.rl_led) form.rl_led.value = cfg.led_mode ?? "AUTO";
+
       const cEl = document.getElementById("rl_count");
       if (cEl) cEl.value = N;
 
-      // Map state picker to *this channel* only
-      // Reuse rl_r1 control; disable rl_r2 in emulator context
-      form.rl_r1.value = String(!!cfg.relay_state[idx]);
+      // Map state picker to *this channel* only; reuse rl_r1; disable rl_r2 in emulator
+      if (form.rl_r1) form.rl_r1.value = String(!!cfg.relay_state[idx]);
       if (form.rl_r2) {
         form.rl_r2.disabled = true;
         form.rl_r2.parentElement?.classList.add("disabled");
       }
 
-      // Optionally tweak label to "Relay (Ch X) State"
       const lbl = form.querySelector("label[for='rl_r1']");
       if (lbl) lbl.textContent = `Relay (Ch ${idx + 1}) State`;
 
@@ -733,26 +898,32 @@
         );
       } catch {}
     }
-    rCfg = { ...relayDefaults, ...(rCfg || {}) };
+    rCfg = {
+      ...(typeof relayDefaults === "object" ? relayDefaults : {}),
+      ...(rCfg || {}),
+    };
     const draft = readDraft("relay", mac);
     if (draft) rCfg = { ...rCfg, ...draft };
 
-    form.rl_name.value = rCfg.name ?? "";
-    form.rl_r1.value = String(!!rCfg.relay_1_state);
-    form.rl_r2.value = String(!!rCfg.relay_2_state);
-    form.rl_mode.value = rCfg.relay_mode ?? "AUTO";
-    form.rl_fan.value = rCfg.fan_mode ?? "AUTO";
-    form.rl_buzz.value = String(!!rCfg.buzzer_enabled);
-    form.rl_pulse.value = rCfg.pulse_duration ?? 200;
-    form.rl_time.value = rCfg.time_sync ? rCfg.time_sync.slice(0, 19) : "";
-    form.rl_tlimit.value = rCfg.temperature_limit ?? 70;
+    if (form.rl_name) form.rl_name.value = rCfg.name ?? "";
+    if (form.rl_r1) form.rl_r1.value = String(!!rCfg.relay_1_state);
+    if (form.rl_r2) form.rl_r2.value = String(!!rCfg.relay_2_state);
+    if (form.rl_mode) form.rl_mode.value = rCfg.relay_mode ?? "AUTO";
+    if (form.rl_fan) form.rl_fan.value = rCfg.fan_mode ?? "AUTO";
+    if (form.rl_buzz) form.rl_buzz.value = String(!!rCfg.buzzer_enabled);
+    if (form.rl_pulse) form.rl_pulse.value = rCfg.pulse_duration ?? 200;
+    if (form.rl_time)
+      form.rl_time.value = rCfg.time_sync ? rCfg.time_sync.slice(0, 19) : "";
+    if (form.rl_tlimit) form.rl_tlimit.value = rCfg.temperature_limit ?? 70;
 
-    form.querySelector("#rl_devid").textContent = rCfg.device_id || "—";
-    form.rl_log.value = rCfg.log_level ?? "INFO";
-    form.rl_auto.value = String(!!rCfg.auto_restart);
-    form.rl_led.value = rCfg.led_mode ?? "AUTO";
+    const idEl = form.querySelector("#rl_devid");
+    if (idEl) idEl.textContent = rCfg.device_id || "—";
+    if (form.rl_log) form.rl_log.value = rCfg.log_level ?? "INFO";
+    if (form.rl_auto) form.rl_auto.value = String(!!rCfg.auto_restart);
+    if (form.rl_led) form.rl_led.value = rCfg.led_mode ?? "AUTO";
   }
 
+  // =================== RELAY: SAVE (supports REMUX) ===================
   async function saveRelaySettings() {
     const form = document.getElementById("relaySettingsForm");
     const ctx = getRelayCtx();
@@ -772,18 +943,21 @@
           localStorage.getItem("icm_remux_cfg_" + mac) || "null"
         );
       } catch {}
-      cfg = { ...remuxDefaults, ...(cfg || {}) };
+      cfg = {
+        ...(typeof remuxDefaults === "object" ? remuxDefaults : {}),
+        ...(cfg || {}),
+      };
 
-      cfg.name = form.rl_name.value.trim();
-      cfg.fan_mode = String(form.rl_fan.value || "AUTO");
-      cfg.buzzer_enabled = form.rl_buzz.value === "true";
-      cfg.time_sync = form.rl_time.value
+      cfg.name = (form.rl_name?.value || "").trim();
+      cfg.fan_mode = String(form.rl_fan?.value || "AUTO");
+      cfg.buzzer_enabled = (form.rl_buzz?.value || "false") === "true";
+      cfg.time_sync = form.rl_time?.value
         ? new Date(form.rl_time.value).toISOString()
         : "";
-      cfg.temperature_limit = Number(form.rl_tlimit.value || 70);
-      cfg.log_level = String(form.rl_log.value || "INFO");
-      cfg.auto_restart = form.rl_auto.value === "true";
-      cfg.led_mode = String(form.rl_led.value || "AUTO");
+      cfg.temperature_limit = Number(form.rl_tlimit?.value || 70);
+      cfg.log_level = String(form.rl_log?.value || "INFO");
+      cfg.auto_restart = (form.rl_auto?.value || "false") === "true";
+      cfg.led_mode = String(form.rl_led?.value || "AUTO");
 
       const N = Math.max(
         1,
@@ -797,17 +971,17 @@
       const ensure = (arr, fill) => {
         const a = Array.isArray(arr) ? arr.slice() : [];
         while (a.length < N) a.push(fill);
-        return a;
+        return a.slice(0, N); // keep exactly N
       };
       cfg.relay_state = ensure(cfg.relay_state, false);
       cfg.relay_mode = ensure(cfg.relay_mode, "AUTO");
       cfg.pulse_duration = ensure(cfg.pulse_duration, 200);
 
-      cfg.relay_state[idx] = form.rl_r1.value === "true";
-      cfg.relay_mode[idx] = String(form.rl_mode.value || "AUTO");
+      cfg.relay_state[idx] = (form.rl_r1?.value || "false") === "true";
+      cfg.relay_mode[idx] = String(form.rl_mode?.value || "AUTO");
       cfg.pulse_duration[idx] = Math.max(
         10,
-        Number(form.rl_pulse.value || 200)
+        Number(form.rl_pulse?.value || 200)
       );
 
       // Persist locally
@@ -823,20 +997,20 @@
 
     // ---- Real Relay path (unchanged) ----
     const rcfg = {
-      name: form.rl_name.value.trim(),
-      relay_1_state: form.rl_r1.value === "true",
-      relay_2_state: form.rl_r2.value === "true",
-      relay_mode: String(form.rl_mode.value || "AUTO"),
-      fan_mode: String(form.rl_fan.value || "AUTO"),
-      buzzer_enabled: form.rl_buzz.value === "true",
-      pulse_duration: Math.max(10, Number(form.rl_pulse.value || 200)),
-      time_sync: form.rl_time.value
+      name: (form.rl_name?.value || "").trim(),
+      relay_1_state: (form.rl_r1?.value || "false") === "true",
+      relay_2_state: (form.rl_r2?.value || "false") === "true",
+      relay_mode: String(form.rl_mode?.value || "AUTO"),
+      fan_mode: String(form.rl_fan?.value || "AUTO"),
+      buzzer_enabled: (form.rl_buzz?.value || "false") === "true",
+      pulse_duration: Math.max(10, Number(form.rl_pulse?.value || 200)),
+      time_sync: form.rl_time?.value
         ? new Date(form.rl_time.value).toISOString()
         : "",
-      temperature_limit: Number(form.rl_tlimit.value || 70),
-      log_level: String(form.rl_log.value || "INFO"),
-      auto_restart: form.rl_auto.value === "true",
-      led_mode: String(form.rl_led.value || "AUTO"),
+      temperature_limit: Number(form.rl_tlimit?.value || 70),
+      log_level: String(form.rl_log?.value || "INFO"),
+      auto_restart: (form.rl_auto?.value || "false") === "true",
+      led_mode: String(form.rl_led?.value || "AUTO"),
     };
 
     let ok = false;
@@ -886,80 +1060,6 @@
     const modal = document.getElementById("sensorSettingsModal");
     if (!modal) return;
     modal.setAttribute("aria-hidden", "true");
-  }
-
-  async function loadSensorSettings(macFromClick) {
-    const form = document.getElementById("sensorSettingsForm");
-    if (!form) return;
-
-    const ctx = getSensorCtx();
-    const mac = macFormatColon(macFromClick || ctx?.mac || "");
-    const isEMU = ctx?.emuType === "SEMUX";
-
-    // Toggle emulator-only UI
-    if (isEMU) form.dataset.emu = "semux";
-    else form.removeAttribute("data-emu");
-
-    let cfg = null;
-
-    if (isEMU) {
-      // SEMUX: shared settings per parent MAC
-      try {
-        cfg = JSON.parse(
-          localStorage.getItem("icm_semux_cfg_" + mac) || "null"
-        );
-      } catch {}
-      cfg = { ...semuxDefaults, ...(cfg || {}) };
-    } else {
-      // Real sensor: backend then local
-      try {
-        const r = await fetch("/api/sensor/settings/get", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mac }),
-        });
-        if (r.ok) cfg = await r.json();
-      } catch {}
-      if (!cfg) {
-        try {
-          cfg = JSON.parse(
-            localStorage.getItem("icm_sensor_cfg_" + mac) || "null"
-          );
-        } catch {}
-      }
-      cfg = { ...sensorDefaults, ...(cfg || {}) };
-    }
-
-    // Overlay any draft (same MAC key)
-    const draft = readDraft("sensor", mac);
-    if (draft) cfg = { ...cfg, ...draft };
-
-    // Common existing fields
-    form.ss_name.value = cfg.name ?? "";
-    form.ss_tf_a.value = cfg.tf_luna_threshold_A ?? 80;
-    form.ss_tf_b.value = cfg.tf_luna_threshold_B ?? 120;
-    form.ss_dn.value = cfg.day_night_threshold ?? 50;
-    form.ss_trigger.value = cfg.trigger_mode ?? "TOGGLE";
-    form.ss_fan.value = cfg.fan_mode ?? "AUTO";
-    form.ss_buzzer.value = String(!!cfg.buzzer_enabled);
-    form.ss_report.value = cfg.report_interval ?? 1000;
-    form.ss_time.value = cfg.time_sync ? cfg.time_sync.slice(0, 19) : "";
-    form.ss_temp_cal.value = cfg.temperature_calibration ?? 0;
-    form.ss_press_off.value = cfg.pressure_offset ?? 0;
-
-    // Common meta
-    form.querySelector("#ss_devid").textContent = cfg.device_id || "—";
-    form.ss_log.value = cfg.log_level ?? "INFO";
-    form.ss_auto.value = String(!!cfg.auto_restart);
-    form.ss_led.value = cfg.led_mode ?? "AUTO";
-
-    // Emulator-only extras
-    if (isEMU) {
-      const cEl = document.getElementById("ss_count");
-      const mEl = document.getElementById("ss_mode");
-      if (cEl) cEl.value = cfg.sensor_count ?? 8;
-      if (mEl) mEl.value = cfg.emulation_mode ?? "STATIC";
-    }
   }
 
   function snapshotPmsFormToDraft() {
@@ -1036,78 +1136,6 @@
       led_mode: String(form.ss_led.value || "AUTO"),
     };
     writeDraft("sensor", mac, draft);
-  }
-
-  async function saveSensorSettings() {
-    const form = document.getElementById("sensorSettingsForm");
-    const ctx = getSensorCtx();
-    const mac = ctx?.mac;
-    if (!form || !mac) {
-      showToast("Select a sensor first");
-      return;
-    }
-    const isEMU = ctx?.emuType === "SEMUX";
-
-    // Build config object from form
-    const baseCfg = {
-      name: form.ss_name.value.trim(),
-      tf_luna_threshold_A: Number(form.ss_tf_a.value || 0),
-      tf_luna_threshold_B: Number(form.ss_tf_b.value || 0),
-      day_night_threshold: Number(form.ss_dn.value || 0),
-      trigger_mode: String(form.ss_trigger.value || "TOGGLE"),
-      fan_mode: String(form.ss_fan.value || "AUTO"),
-      buzzer_enabled: form.ss_buzzer.value === "true",
-      report_interval: Math.max(250, Number(form.ss_report.value || 1000)),
-      time_sync: form.ss_time.value
-        ? new Date(form.ss_time.value).toISOString()
-        : "",
-      temperature_calibration: Number(form.ss_temp_cal.value || 0),
-      pressure_offset: Number(form.ss_press_off.value || 0),
-      log_level: String(form.ss_log.value || "INFO"),
-      auto_restart: form.ss_auto.value === "true",
-      led_mode: String(form.ss_led.value || "AUTO"),
-    };
-
-    if (isEMU) {
-      // Add emulator-only fields
-      baseCfg.sensor_count = Math.max(
-        1,
-        Number(document.getElementById("ss_count")?.value || 8)
-      );
-      baseCfg.emulation_mode = String(
-        document.getElementById("ss_mode")?.value || "STATIC"
-      );
-
-      // Persist locally under SEMUX key
-      try {
-        localStorage.setItem("icm_semux_cfg_" + mac, JSON.stringify(baseCfg));
-      } catch {}
-      clearDraft("sensor", mac);
-      closeSensorSettings();
-      renderPalette(); // counts change → refresh dropdown
-      showToast("SEMUX settings saved");
-      return;
-    }
-
-    // Real sensor: try backend, then local fallback
-    let ok = false;
-    try {
-      const r = await fetch("/api/sensor/settings/set", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mac, cfg: baseCfg }),
-      });
-      ok = r.ok;
-    } catch {}
-    try {
-      localStorage.setItem("icm_sensor_cfg_" + mac, JSON.stringify(baseCfg));
-      if (!ok) ok = true;
-    } catch {}
-    showToast(ok ? "Settings saved" : "Save failed");
-    if (ok) {
-      clearDraft("sensor", mac);
-      closeSensorSettings();
-    }
   }
 
   // ---------- Class helpers ----------
@@ -2554,66 +2582,94 @@
 
   // ------------------------ Init ------------------------
   async function initTopologyPage() {
+    // Load peers and configuration
     await fetchPeers();
     await loadFromDevice();
+
+    // Auto-select power module if present
     const pwr = peers.find((p) => String(p.type).toLowerCase() === "power");
     if (pwr) {
       selectedId = null;
       selectedPeer = { type: pwr.type, mac: macFormatColon(pwr.mac || "") };
       updateSelectionPanel("POWER", selectedPeer.mac);
     }
-    // Settings button under Selected → Sensor
-    document
-      .getElementById("btnSensorSettings")
-      ?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openSensorSettings();
-      });
 
-    // Modal controls
-    document
-      .getElementById("sensorSettingsClose")
-      ?.addEventListener("click", (e) => {
-        e.stopPropagation(); // <-- add
-        closeSensorSettings();
-      });
-    document
-      .getElementById("sensorSettingsCancel")
-      ?.addEventListener("click", (e) => {
-        e.preventDefault();
+    // ---------------- Sensor Settings ----------------
+    const btnSensorSettings = document.getElementById("btnSensorSettings");
+    const btnSensorSave = document.getElementById("sensorSettingsSave");
+    const btnSensorClose = document.getElementById("sensorSettingsClose");
+    const btnSensorCancel = document.getElementById("sensorSettingsCancel");
+    const modalSensor = document.getElementById("sensorSettingsModal");
+
+    btnSensorSettings?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openSensorSettings();
+    });
+
+    btnSensorClose?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeSensorSettings();
+    });
+
+    btnSensorCancel?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      snapshotSensorFormToDraft(); // preserve unsaved picks
+      closeSensorSettings();
+    });
+
+    btnSensorSave?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await saveSensorSettings();
+      } catch (_) {
+        // handle silently or show toast
+      }
+    });
+
+    modalSensor?.addEventListener("click", (e) => {
+      if (e.target?.dataset?.close) {
         e.stopPropagation();
-        snapshotSensorFormToDraft(); // <-- keep current picks
-        closeSensorSettings();
-      });
-    document
-      .getElementById("sensorSettingsSave")
-      ?.addEventListener("click", (e) => {
-        e.preventDefault();
-        saveSensorSettings().catch(() => {});
-      });
-    // Close on backdrop click
-    document
-      .getElementById("sensorSettingsModal")
-      ?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (e.target?.dataset?.close) {
-          snapshotSensorFormToDraft(); // <-- keep on backdrop close
-          closeSensorSettings();
-        }
-      });
-    // Close on Esc
-    document.addEventListener("keydown", (e) => {
-      const modal = document.getElementById("sensorSettingsModal");
-      if (
-        e.key === "Escape" &&
-        modal &&
-        modal.getAttribute("aria-hidden") === "false"
-      ) {
-        snapshotSensorFormToDraft(); // <-- keep on Esc
+        snapshotSensorFormToDraft(); // preserve on backdrop close
         closeSensorSettings();
       }
     });
+
+    // Close on Esc
+    document.addEventListener("keydown", (e) => {
+      if (
+        e.key === "Escape" &&
+        modalSensor &&
+        modalSensor.getAttribute("aria-hidden") === "false"
+      ) {
+        snapshotSensorFormToDraft();
+        closeSensorSettings();
+      }
+    });
+
+    // ---------------- Relay Settings ----------------
+    const btnRelaySettings = document.getElementById("btnRelaySettings");
+    const btnRelaySave = document.getElementById("relaySettingsSave");
+
+    btnRelaySettings?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openRelaySettings();
+    });
+
+    btnRelaySave?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await saveRelaySettings();
+      } catch (_) {
+        // handle silently or show toast
+      }
+    });
   }
+
   // Relay Settings button under Selected → Relay
   document
     .getElementById("btnRelaySettings")

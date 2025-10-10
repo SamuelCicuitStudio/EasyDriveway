@@ -476,6 +476,30 @@
                 </div>
               </div>
             </div>
+            <!-- SEMUX Emulator (shows only when data-emu="semux") -->
+            <div class="settings-section emu-only emu-only-semux">
+              <div class="section-title">SEMUX Emulator</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="ss_count">Virtual Sensors</label>
+                  <input
+                    id="ss_count"
+                    name="sensor_count"
+                    type="number"
+                    min="1"
+                    max="32"
+                  />
+                </div>
+                <div class="kv mini">
+                  <label for="ss_mode">Emulation Mode</label>
+                  <select id="ss_mode" name="emulation_mode">
+                    <option value="STATIC">STATIC</option>
+                    <option value="DYNAMIC">DYNAMIC</option>
+                    <option value="PATTERN">PATTERN</option>
+                  </select>
+                </div>
+              </div>
+            </div>
 
             <!-- Detection & Environment -->
             <div class="settings-section">
@@ -669,6 +693,22 @@
                 <div class="kv mini">
                   <label for="rl_time">Time Sync</label>
                   <input id="rl_time" name="time_sync" type="datetime-local" />
+                </div>
+              </div>
+            </div>
+            <!-- REMUX Emulator (shows only when data-emu="remux") -->
+            <div class="settings-section emu-only emu-only-remux">
+              <div class="section-title">REMUX Emulator</div>
+              <div class="settings-grid">
+                <div class="kv mini">
+                  <label for="rl_count">Virtual Relays</label>
+                  <input
+                    id="rl_count"
+                    name="relay_count"
+                    type="number"
+                    min="1"
+                    max="32"
+                  />
                 </div>
               </div>
             </div>

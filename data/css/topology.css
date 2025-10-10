@@ -1210,39 +1210,29 @@ input[type="text"] {
   opacity: 0.85;
 }
 /* =========================================================
-   EMULATOR VISIBILITY TOGGLES — Modals only
-   (Never show in Selected panel)
+   EMULATOR VISIBILITY (SEMUX / REMUX) — Modals only
+   The JS sets data-emu="semux" or "remux" on .modal-body
    ========================================================= */
 
-/* Never show emulator-only controls inside the Selected panel */
+/* Default: hide emulator-only controls everywhere */
 #selInfo .emu-only,
 #selInfo .emu-only-semux,
 #selInfo .emu-only-remux,
-#selInfo .emu-semux-only,
-#selInfo .emu-remux-only {
-  display: none !important;
-}
-
-/* Default: hide in modals, too (opt-in via data-emu) */
 .modal-body .emu-only,
 .modal-body .emu-only-semux,
-.modal-body .emu-only-remux,
-.modal-body .emu-semux-only, /* alias supported */
-.modal-body .emu-remux-only   /* alias supported */ {
+.modal-body .emu-only-remux {
   display: none !important;
 }
 
-/* Show SEMUX blocks only when the modal carries data-emu="semux" */
+/* Show SEMUX blocks only when the form carries data-emu="semux" */
 .modal-body[data-emu="semux"] .emu-only,
-.modal-body[data-emu="semux"] .emu-only-semux,
-.modal-body[data-emu="semux"] .emu-semux-only {
+.modal-body[data-emu="semux"] .emu-only-semux {
   display: block !important;
 }
 
-/* Show REMUX blocks only when the modal carries data-emu="remux" */
+/* Show REMUX blocks only when the form carries data-emu="remux" */
 .modal-body[data-emu="remux"] .emu-only,
-.modal-body[data-emu="remux"] .emu-only-remux,
-.modal-body[data-emu="remux"] .emu-remux-only {
+.modal-body[data-emu="remux"] .emu-only-remux {
   display: block !important;
 }
 
