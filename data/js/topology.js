@@ -1925,7 +1925,16 @@
     const pill = document.createElement("button");
     pill.className = "pill " + cls;
     const fullMac = macFormatColon(p.mac || "");
-    pill.innerHTML = `<span class="pill-title">${titleText} . ${fullMac}</span>`;
+    pill.innerHTML = `
+  <span class="pill-title"
+        style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+    <span>${titleText}</span>
+    <span aria-hidden="true"
+          style="display:inline-block;width:6px;height:6px;border-radius:50%;
+                 background:currentColor;opacity:.6;flex:0 0 auto;"></span>
+    <span class="mono" style="opacity:.9;">${fullMac}</span>
+  </span>
+`;
 
     // Draggable only if placeable (SENSOR/RELAY or their emulators)
     pill.draggable = isChainPlaceable(p.type);
