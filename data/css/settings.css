@@ -1,0 +1,366 @@
+/* ======================================================================
+   ICM · settings.css  —  DROP-IN FIX (scoped to .grid-settings / .wrap)
+   Goals:
+     • 2-col layout (no right rail); left = Time + System, right = Settings
+     • Only DATE + ANALOG CLOCK in Time card (hide any digital/uptime)
+     • ICM Configuration + Section selector merged (tabs styled)
+     • Time & System stay visible at the bottom; only the form scrolls
+   ====================================================================== */
+
+/* ------------------------- GRID LAYOUT ------------------------- */
+/* Only elements inside .grid-settings are affected */
+.grid-settings {
+  display: grid;
+  gap: 16px;
+  /* Mobile-first: stack everything */
+  grid-template-areas:
+    "time"
+    "sys"
+    "settings";
+}
+
+@media (min-width: 900px) {
+  .grid-settings {
+    grid-template-columns: 1.1fr 1.9fr;
+    grid-template-areas:
+      "time settings"
+      "sys  settings";
+  }
+}
+@media (min-width: 1280px) {
+  .grid-settings {
+    grid-template-columns: 1.15fr 1.85fr;
+    grid-template-areas:
+      "time settings"
+      "sys  settings";
+  }
+}
+
+/* Remove legacy right rail completely */
+.grid-settings .settings-nav {
+  display: none !important;
+}
+
+.grid-settings .card-time {
+  grid-area: time;
+}
+.grid-settings .card-sys {
+  grid-area: sys;
+}
+.grid-settings .card-settings {
+  grid-area: settings;
+}
+
+/* Keep the left-column cards visible at the bottom of the viewport */
+.grid-settings .card-time,
+.grid-settings .card-sys {
+  position: sticky;
+  bottom: 12px; /* distance from viewport bottom */
+  z-index: 1; /* above the settings form content */
+}
+
+/* Ensure the settings card remains the only scroll container */
+.grid-settings .card.card-settings {
+  max-height: 74vh; /* tall but not full */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The form is the scroll container */
+.grid-settings .card.card-settings > form.settings {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Ensure ancestors don’t block inner scrolling */
+.wrap,
+.grid-settings,
+.grid-settings .card.card-settings {
+  min-height: 0;
+}
+
+/* ----------------------- MERGED TABS (in header) ----------------------- */
+.grid-settings .settings-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  gap: 10px;
+  margin-left: auto; /* push tabs to the right inside the header */
+  overflow: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  padding-block: 4px;
+}
+.grid-settings .settings-tabs a {
+  text-decoration: none;
+  opacity: 0.85;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+.grid-settings .settings-tabs a.active,
+.grid-settings .settings-tabs a:hover {
+  opacity: 1;
+  font-weight: 600;
+  text-shadow: 0 0 12px rgba(0, 255, 170, 0.35);
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+}
+
+/* ------------------------ TIME & CLOCKS CARD ------------------------ */
+.grid-settings .card.card-time {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+  top: var(--card-time-top, 0px); /* <-- control vertical offset */
+  transition: top 0.2s ease; /* smooth movement */
+}
+.grid-settings .card.card-time > header {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Keep only DATE + ANALOG CLOCK */
+.grid-settings .card-time .time-uptime,
+.grid-settings .card-time #uptime_big,
+.grid-settings .card-time #now_time,
+.grid-settings .card-time .digital.big,
+.grid-settings .card-time .digital.giant {
+  display: none !important;
+}
+
+.grid-settings .time-grid {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  justify-items: center;
+  grid-template-areas:
+    "now"
+    "analog";
+}
+@media (min-width: 900px) {
+  .grid-settings .time-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "now"
+      "analog";
+  }
+}
+
+.grid-settings .time-now {
+  grid-area: now;
+}
+.grid-settings .time-analog {
+  grid-area: analog;
+}
+
+.grid-settings .time-block {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.grid-settings #analogClock {
+  display: block;
+  width: clamp(
+    150px,
+    22vw,
+    260px
+  ); /* slightly tighter to help both cards fit */
+  height: auto;
+  aspect-ratio: 1 / 1;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.35));
+  border-radius: 50%;
+}
+
+.grid-settings .subtle {
+  opacity: 0.75;
+  font-size: 0.95rem;
+}
+
+/* ---------------------------- SYSTEM CARD ---------------------------- */
+.grid-settings .card.card-sys {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.grid-settings .card.card-sys > header {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.grid-settings .card.card-sys .row.smallgap {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.grid-settings .card-sys .kv.mini {
+  min-width: 180px;
+}
+.grid-settings .card-sys .kv.mini .value {
+  font-weight: 700;
+}
+
+.grid-settings .sys-actions {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+  border-radius: 10px;
+}
+.grid-settings .sys-actions .row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* --------------------------- SETTINGS CARD --------------------------- */
+.grid-settings .card.card-settings {
+  --settings-max-h: 74vh;
+  max-height: var(--settings-max-h);
+}
+.grid-settings .card.card-settings > header {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  background: var(--surface-2, rgba(0, 0, 0, 0.25));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding-block: 8px;
+}
+.grid-settings .card.card-settings > header .tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.grid-settings .input.small input {
+  padding: 6px 8px;
+  font-size: 0.9rem;
+}
+
+/* Sections + collapse behavior */
+.grid-settings .settings-section {
+  padding-block: 6px;
+}
+.grid-settings .section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 2px;
+  position: sticky;
+  top: 0; /* sticks within form scroll */
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.1) 60%,
+    rgba(0, 0, 0, 0.18) 100%
+  );
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 1;
+}
+.grid-settings .section-title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.grid-settings .collapse-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--text, #fff);
+  opacity: 0.8;
+  cursor: pointer;
+}
+.grid-settings .collapse-toggle:hover {
+  opacity: 1;
+}
+
+.grid-settings .settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+.grid-settings .kv.mini.full {
+  grid-column: 1 / -1;
+}
+.grid-settings .kv.mini input,
+.grid-settings .kv.mini select,
+.grid-settings .kv.mini .row.inline input,
+.grid-settings .kv.mini .row.inline select {
+  width: 100%;
+}
+
+.grid-settings .settings-section.collapsed .settings-grid {
+  display: none;
+}
+.grid-settings
+  .settings-section.collapsed
+  .collapse-toggle[aria-expanded="false"]::after {
+  content: " (show)";
+}
+.grid-settings .settings-section .collapse-toggle[aria-expanded="true"]::after {
+  content: " (hide)";
+}
+
+/* ----------------------- Scrollbar cosmetics ----------------------- */
+.grid-settings .card.card-settings > form.settings::-webkit-scrollbar {
+  width: 12px;
+}
+.grid-settings .card.card-settings > form.settings::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.18),
+    rgba(255, 255, 255, 0.06)
+  );
+}
+.grid-settings .card.card-settings > form.settings::-webkit-scrollbar-track {
+  background: transparent;
+}
+.grid-settings .card.card-settings > form.settings {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+
+/* ------------------------------- Toast ------------------------------- */
+/* (Left as-is; independent of grid) */
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9999;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.95rem;
+}

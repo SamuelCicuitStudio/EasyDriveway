@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ICM · Settings</title>
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/topology.css" />
+    <link rel="stylesheet" href="css/settings.css" />
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <div class="frame">
+      <!-- Topbar (UNCHANGED) -->
+      <div class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" aria-label="Network">
+              <circle cx="6" cy="12" r="2"></circle>
+              <circle cx="12" cy="6" r="2"></circle>
+              <circle cx="18" cy="12" r="2"></circle>
+              <path
+                d="M8 12 L10 12 L12 8 L16 8 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M14 12 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="grow"></div>
+          <label class="input" aria-label="Filter peers">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"
+                fill="currentColor"
+              />
+            </svg>
+            <input id="peerFilter" type="text" placeholder="Filter peers…" />
+          </label>
+          <div class="row right gap-2">
+            <button
+              id="refreshPairs"
+              class="btn ghost"
+              title="Reload paired devices"
+            >
+              Refresh
+            </button>
+            <button id="logoutBtnLegacy" class="btn danger" title="Log out">
+              Logout
+            </button>
+          </div>
+          <div class="title">Interface Control Module</div>
+        </div>
+        <nav class="nav">
+          <a href="/data/home.html">Home</a>
+          <a href="/data/settings.html" class="active">Settings</a>
+          <a href="/data/wifi.html">Networking</a>
+          <a href="/data/topology.html">Topology</a>
+        </nav>
+        <div class="logout"><button id="logoutBtn">Logout</button></div>
+      </div>
+
+      <!-- Hero (UNCHANGED) -->
+      <div class="hero-card">
+        <svg
+          class="home-hero"
+          viewBox="0 0 24 24"
+          width="56"
+          height="56"
+          aria-hidden="true"
+        >
+          <circle cx="6" cy="12" r="2"></circle>
+          <circle cx="12" cy="6" r="2"></circle>
+          <circle cx="18" cy="12" r="2"></circle>
+          <path
+            d="M8 12 L10 12 L12 8 L16 8 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M14 12 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <div class="hero-text">
+          <h2>Settings</h2>
+          <p>
+            Configure the ICM. System info on top, configurable parameters
+            below.
+          </p>
+        </div>
+      </div>
+
+      <!-- Body (REWRITTEN under .grid-settings only) -->
+      <div class="wrap">
+        <!-- Toast lives after hero; used by JS -->
+        <div id="toast" class="toast" role="status" hidden></div>
+
+        <div class="grid-settings">
+          <!-- LEFT COLUMN: Time & System -->
+          <section class="card card-time">
+            <header><h3>Time & Clocks</h3></header>
+            <div class="time-grid">
+              <div class="time-block time-now">
+                <div id="now_date" class="subtle">—</div>
+              </div>
+              <div class="time-block time-analog">
+                <canvas
+                  id="analogClock"
+                  width="240"
+                  height="240"
+                  aria-label="Analog clock"
+                  role="img"
+                ></canvas>
+              </div>
+            </div>
+          </section>
+
+          <section class="card card-sys">
+            <header>
+              <h3>System</h3>
+              <span class="badge">Read-only</span>
+            </header>
+            <div class="row smallgap">
+              <div class="kv mini">
+                <label>Device ID</label>
+                <div id="sys_devid" class="value mono">—</div>
+              </div>
+              <div class="kv mini">
+                <label>Firmware</label>
+                <div id="sys_fw" class="value">—</div>
+              </div>
+              <div class="kv mini">
+                <label>Build</label>
+                <div id="sys_build" class="value">—</div>
+              </div>
+              <div class="kv mini">
+                <label>ESP-NOW Channel</label>
+                <div id="sys_channel" class="value">—</div>
+              </div>
+              <div class="kv mini">
+                <label>Uptime</label>
+                <div id="sys_uptime" class="value">—</div>
+              </div>
+            </div>
+            <div class="sys-actions">
+              <div class="row">
+                <button id="btnImport" class="btn" type="button">Import</button>
+                <button id="btnExport" class="btn" type="button">Export</button>
+                <input
+                  id="fileImport"
+                  type="file"
+                  accept="application/json"
+                  hidden
+                />
+                <div class="grow"></div>
+                <button id="btnReboot" class="btn warn" type="button">
+                  Reboot ICM
+                </button>
+                <button id="btnReset" class="btn" type="button">
+                  Reset Changes
+                </button>
+                <button
+                  id="btnSave"
+                  class="btn primary"
+                  type="submit"
+                  form="icmForm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- MAIN: Configuration form -->
+          <section class="card card-settings">
+            <header>
+              <h3>ICM Configuration</h3>
+              <span class="badge badge-info" id="dirtyFlag" hidden
+                >Unsaved</span
+              >
+              <div class="tools">
+                <label class="input small" aria-label="Filter settings">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <input
+                    id="settingsFilter"
+                    type="text"
+                    placeholder="Filter by name, label, or value…"
+                    autocomplete="off"
+                  />
+                </label>
+                <div class="row gap-1">
+                  <button id="btnExpandAll" class="btn ghost" type="button">
+                    Expand All
+                  </button>
+                  <button id="btnCollapseAll" class="btn ghost" type="button">
+                    Collapse All
+                  </button>
+                </div>
+              </div>
+              <nav id="settingsIndex" class="settings-tabs">
+                <a href="#sec-network">Network & Topology</a>
+                <a href="#sec-time">Time & Sync</a>
+                <a href="#sec-power">Power & Relay</a>
+                <a href="#sec-safety">Environmental & Safety</a>
+                <a href="#sec-led">LED & Feedback</a>
+                <a href="#sec-logging">Data Logging</a>
+                <a href="#sec-automation">Automation</a>
+                <a href="#sec-web">Web & UI</a>
+                <a href="#sec-comm">Communication</a>
+              </nav>
+            </header>
+
+            <form id="icmForm" class="settings" autocomplete="off">
+              <!-- 1. Network & Topology -->
+              <div
+                id="sec-network"
+                class="settings-section"
+                data-title="Network & Topology"
+              >
+                <div class="section-head">
+                  <div class="section-title">🧩 Network & Topology</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-network-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-network-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="pair_mode">Pairing Mode</label>
+                    <select id="pair_mode" name="pair_mode">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="refresh_topology_interval"
+                      >Topology Refresh (s)</label
+                    >
+                    <input
+                      id="refresh_topology_interval"
+                      name="refresh_topology_interval"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="broadcast_retry_count">Broadcast Retries</label>
+                    <input
+                      id="broadcast_retry_count"
+                      name="broadcast_retry_count"
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputmode="numeric"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="allowed_roles">Allowed Roles (CSV)</label>
+                    <input
+                      id="allowed_roles"
+                      name="allowed_roles"
+                      type="text"
+                      placeholder="PMS,SENSOR,RELAY,EMULATOR"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="time_sync_interval"
+                      >Time Sync Interval (s)</label
+                    >
+                    <input
+                      id="time_sync_interval"
+                      name="time_sync_interval"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                    />
+                  </div>
+                  <div class="kv mini full">
+                    <label for="remove_mac">Remove Device by MAC</label>
+                    <div class="row inline">
+                      <input
+                        id="remove_mac"
+                        type="text"
+                        placeholder="AA:BB:CC:DD:EE:FF"
+                      />
+                      <button
+                        id="btnRemoveMac"
+                        class="btn danger"
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. Time & Synchronization -->
+              <div
+                id="sec-time"
+                class="settings-section"
+                data-title="Time & Synchronization"
+              >
+                <div class="section-head">
+                  <div class="section-title">⏱️ Time & Synchronization</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-time-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-time-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="rtc_sync_source">RTC Sync Source</label>
+                    <select id="rtc_sync_source" name="rtc_sync_source">
+                      <option value="DS3231">DS3231</option>
+                      <option value="NTP">NTP</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="auto_time_sync">Auto Time Sync</label>
+                    <select id="auto_time_sync" name="auto_time_sync">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="timezone_offset">Timezone Offset (hours)</label>
+                    <input
+                      id="timezone_offset"
+                      name="timezone_offset"
+                      type="number"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="sync_on_boot">Sync on Boot</label>
+                    <select id="sync_on_boot" name="sync_on_boot">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. Power & Relay -->
+              <div
+                id="sec-power"
+                class="settings-section"
+                data-title="Power & Relay Management"
+              >
+                <div class="section-head">
+                  <div class="section-title">⚡ Power & Relay Management</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-power-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-power-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="relay_command_mode">Relay Command Mode</label>
+                    <select id="relay_command_mode" name="relay_command_mode">
+                      <option value="DIRECT">DIRECT</option>
+                      <option value="GROUPED">GROUPED</option>
+                      <option value="CONDITIONAL">CONDITIONAL</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="manual_override">Manual Override</label>
+                    <select id="manual_override" name="manual_override">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="pms_auto_switch">PMS Auto Switch</label>
+                    <select id="pms_auto_switch" name="pms_auto_switch">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="relay_default_state">Relay Default State</label>
+                    <select id="relay_default_state" name="relay_default_state">
+                      <option value="OFF">OFF</option>
+                      <option value="ON">ON</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. Environmental & Safety -->
+              <div
+                id="sec-safety"
+                class="settings-section"
+                data-title="Environmental & Safety"
+              >
+                <div class="section-head">
+                  <div class="section-title">🌡️ Environmental & Safety</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-safety-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-safety-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="icm_temp_threshold"
+                      >ICM Temp Threshold (°C)</label
+                    >
+                    <input
+                      id="icm_temp_threshold"
+                      name="icm_temp_threshold"
+                      type="number"
+                      step="0.5"
+                      inputmode="decimal"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="icm_temp_warning">ICM Temp Warning (°C)</label>
+                    <input
+                      id="icm_temp_warning"
+                      name="icm_temp_warning"
+                      type="number"
+                      step="0.5"
+                      inputmode="decimal"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="fan_mode">Fan Mode</label>
+                    <select id="fan_mode" name="fan_mode">
+                      <option value="AUTO">AUTO</option>
+                      <option value="ECO">ECO</option>
+                      <option value="FULL">FULL</option>
+                      <option value="OFF">OFF</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="buzzer_mode">Buzzer Mode</label>
+                    <select id="buzzer_mode" name="buzzer_mode">
+                      <option value="ALERT">ALERT</option>
+                      <option value="TOGGLE">TOGGLE</option>
+                      <option value="SILENT">SILENT</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="safety_lockout">Safety Lockout</label>
+                    <select id="safety_lockout" name="safety_lockout">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="fault_alert_enable">Fault Alert</label>
+                    <select id="fault_alert_enable" name="fault_alert_enable">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 5. LED & Feedback -->
+              <div
+                id="sec-led"
+                class="settings-section"
+                data-title="LED & Feedback"
+              >
+                <div class="section-head">
+                  <div class="section-title">💡 LED & Feedback</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-led-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-led-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="rgb_mode">RGB Mode</label>
+                    <select id="rgb_mode" name="rgb_mode">
+                      <option value="STATUS">STATUS</option>
+                      <option value="TOPOLOGY">TOPOLOGY</option>
+                      <option value="CUSTOM">CUSTOM</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="rgb_color_idle">Idle Color (#RRGGBB)</label>
+                    <input
+                      id="rgb_color_idle"
+                      name="rgb_color_idle"
+                      type="text"
+                      placeholder="#00ffaa"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="rgb_color_alert">Alert Color (#RRGGBB)</label>
+                    <input
+                      id="rgb_color_alert"
+                      name="rgb_color_alert"
+                      type="text"
+                      placeholder="#ff3366"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="led_brightness">LED Brightness (0–255)</label>
+                    <input
+                      id="led_brightness"
+                      name="led_brightness"
+                      type="number"
+                      min="0"
+                      max="255"
+                      step="1"
+                      inputmode="numeric"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="blink_on_activity">Blink on Activity</label>
+                    <select id="blink_on_activity" name="blink_on_activity">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 6. Data Logging & Storage -->
+              <div
+                id="sec-logging"
+                class="settings-section"
+                data-title="Data Logging & Storage"
+              >
+                <div class="section-head">
+                  <div class="section-title">💾 Data Logging & Storage</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-logging-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-logging-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="logging_enabled">Logging</label>
+                    <select id="logging_enabled" name="logging_enabled">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="log_detail_level">Log Detail</label>
+                    <select id="log_detail_level" name="log_detail_level">
+                      <option value="BASIC">BASIC</option>
+                      <option value="INFO">INFO</option>
+                      <option value="DEBUG">DEBUG</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="log_rotation_size">Rotation Size (KB)</label>
+                    <input
+                      id="log_rotation_size"
+                      name="log_rotation_size"
+                      type="number"
+                      min="1"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="log_auto_cleanup_days"
+                      >Auto Cleanup (days)</label
+                    >
+                    <input
+                      id="log_auto_cleanup_days"
+                      name="log_auto_cleanup_days"
+                      type="number"
+                      min="0"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini full">
+                    <label>Export Topology Snapshot</label>
+                    <button id="btnExportTopo" class="btn" type="button">
+                      Export
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 7. Automation & Behavior -->
+              <div
+                id="sec-automation"
+                class="settings-section"
+                data-title="Automation & Behavior"
+              >
+                <div class="section-head">
+                  <div class="section-title">🧠 Automation & Behavior</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-automation-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-automation-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="auto_reconnect_nodes"
+                      >Auto Reconnect Nodes</label
+                    >
+                    <select
+                      id="auto_reconnect_nodes"
+                      name="auto_reconnect_nodes"
+                    >
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="fault_retry_limit">Fault Retry Limit</label>
+                    <input
+                      id="fault_retry_limit"
+                      name="fault_retry_limit"
+                      type="number"
+                      min="0"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="priority_override">Priority Override</label>
+                    <select id="priority_override" name="priority_override">
+                      <option value="CCID">CCID</option>
+                      <option value="MANUAL">MANUAL</option>
+                      <option value="SYSTEM">SYSTEM</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="alert_on_new_device">Alert on New Device</label>
+                    <select id="alert_on_new_device" name="alert_on_new_device">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="web_update_enable">Web Update (OTA)</label>
+                    <select id="web_update_enable" name="web_update_enable">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 8. Web & UI -->
+              <div id="sec-web" class="settings-section" data-title="Web & UI">
+                <div class="section-head">
+                  <div class="section-title">🌐 Web & UI</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-web-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-web-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="web_theme">Theme</label>
+                    <select id="web_theme" name="web_theme">
+                      <option value="dark">dark</option>
+                      <option value="light">light</option>
+                      <option value="custom">custom</option>
+                    </select>
+                  </div>
+                  <div class="kv mini">
+                    <label for="refresh_interval_ui">UI Refresh (ms)</label>
+                    <input
+                      id="refresh_interval_ui"
+                      name="refresh_interval_ui"
+                      type="number"
+                      min="250"
+                      step="250"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="admin_password">Admin Password</label>
+                    <input
+                      id="admin_password"
+                      name="admin_password"
+                      type="text"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="auto_save_config">Auto Save Config</label>
+                    <select id="auto_save_config" name="auto_save_config">
+                      <option value="false">Disabled</option>
+                      <option value="true">Enabled</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 9. Communication & Maintenance -->
+              <div
+                id="sec-comm"
+                class="settings-section"
+                data-title="Communication & Maintenance"
+              >
+                <div class="section-head">
+                  <div class="section-title">🪫 Communication & Maintenance</div>
+                  <button
+                    class="collapse-toggle"
+                    type="button"
+                    aria-expanded="true"
+                    aria-controls="sec-comm-body"
+                  >
+                    Hide
+                  </button>
+                </div>
+                <div id="sec-comm-body" class="settings-grid">
+                  <div class="kv mini">
+                    <label for="espnow_channel">ESP-NOW Channel</label>
+                    <input
+                      id="espnow_channel"
+                      name="espnow_channel"
+                      type="number"
+                      min="1"
+                      max="13"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="broadcast_mac">Broadcast MAC Override</label>
+                    <input
+                      id="broadcast_mac"
+                      name="broadcast_mac"
+                      type="text"
+                      placeholder="FF:FF:FF:FF:FF:FF"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="ping_interval">Ping Interval (s)</label>
+                    <input
+                      id="ping_interval"
+                      name="ping_interval"
+                      type="number"
+                      min="1"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini">
+                    <label for="ping_timeout">Ping Timeout (s)</label>
+                    <input
+                      id="ping_timeout"
+                      name="ping_timeout"
+                      type="number"
+                      min="1"
+                      step="1"
+                    />
+                  </div>
+                  <div class="kv mini full">
+                    <label>Reset All Nodes</label>
+                    <button id="btnResetAll" class="btn danger" type="button">
+                      Reset
+                    </button>
+                  </div>
+                  <div class="kv mini">
+                    <label for="restart_delay">Restart Delay (ms)</label>
+                    <input
+                      id="restart_delay"
+                      name="restart_delay"
+                      type="number"
+                      min="0"
+                      step="50"
+                    />
+                  </div>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script src="mock/settings.mock.js"></script>
+    <script src="js/settings.js"></script>
+  </body>
+</html>

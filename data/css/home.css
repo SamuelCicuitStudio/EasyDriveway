@@ -1,0 +1,260 @@
+/* Home page – small helpers that sit on top of app.css + topology.css */
+.grid-home {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  grid-auto-rows: minmax(120px, auto);
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+}
+.grid-full {
+  grid-column: 1 / -1;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.metric {
+  background: #0d1424;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+}
+.metric .metric-title {
+  font-size: 11px;
+  color: #9eb0c7;
+}
+.metric .metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.kv-table {
+  overflow: auto;
+}
+.kv-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.kv-table th,
+.kv-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #1f2940;
+  vertical-align: top;
+}
+.kv-table th {
+  color: #9eb0c7;
+  font-weight: 600;
+  font-size: 12px;
+}
+.kv-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+}
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-title .badge {
+  margin-left: auto;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+@media (max-width: 1180px) {
+  .grid-home {
+    grid-template-columns: 1fr;
+  }
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* --- Overflow fixes (added) ----------------------------------------------- */
+/* Prevent grid children from forcing the grid wider than the viewport */
+.grid-home > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Make cards contain wide content; tables inside will scroll instead */
+.card {
+  overflow: hidden;
+}
+
+/* Ensure inner tables don't blow out card width */
+.kv-table {
+  overflow: auto;
+  max-width: 100%;
+}
+.kv-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.kv-table th,
+.kv-table td {
+  word-break: break-word;
+}
+
+/* --- Home catalog scroll area --- */
+.card.card-catalog .scrollable {
+  /* leave room for topbar + hero; adjust if your header heights change */
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+  padding-right: 4px; /* keep scrollbar off text */
+}
+
+/* Allow page-level scrolling too, if content exceeds viewport */
+.wrap {
+  overflow: auto;
+}
+
+/* Tweak long code cells so they wrap neatly */
+.kv-table code {
+  white-space: normal;
+}
+
+/* === DROP-IN: Catalog inner scroll (keeps window tidy) ===================== */
+.card.card-catalog {
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+}
+.card.card-catalog > header {
+  flex: 0 0 auto;
+}
+.catalog-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  max-height: calc(100vh - 220px);
+}
+
+/* Horizontal safety for wide tables */
+.kv-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.kv-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.kv-table th,
+.kv-table td {
+  word-break: break-word;
+}
+
+/* === FINAL DROP-IN LAYOUT FIX ============================================= */
+/* Let the page grow and scroll naturally */
+.grid-home {
+  height: auto;
+} /* was: 100% */
+.wrap {
+  overflow: visible;
+}
+.card {
+  overflow: visible;
+} /* no clipping within standard cards */
+
+/* Only the big catalog card scrolls inside */
+.card.card-catalog {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+}
+.card.card-catalog > header {
+  flex: 0 0 auto;
+}
+.catalog-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Compute exact height in JS; CSS needs a safe upper bound for no-JS fallback */
+@media (min-height: 480px) {
+  .catalog-scroll {
+    max-height: calc(100vh - 240px);
+  }
+}
+
+/* Safety for wide tables */
+.kv-table {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.kv-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.kv-table th,
+.kv-table td {
+  word-break: break-word;
+}
+
+/* Prevent grid children from forcing overflow */
+.grid-home > * {
+  min-width: 0;
+  min-height: 0;
+}
+/* ========================================================================== */
+.catalog-scroll {
+  /* Optional fixed height control: set --catalog-scroll-height on this element or parent */
+  max-height: var(--catalog-scroll-height, 100%);
+  /* existing overflow rules remain */
+}
+
+/* Utility classes for quick fixed heights */
+.catalog-h-200 {
+  --catalog-scroll-height: 200px;
+}
+.catalog-h-320 {
+  --catalog-scroll-height: 320px;
+} /* default applied once to help you see it */
+.catalog-h-480 {
+  --catalog-scroll-height: 480px;
+}
+
+/* === DROP-IN: PIXEL CONTROL FOR CATALOG CARD HEIGHT =======================
+   Control the height of the *card* itself with a CSS variable.
+   Example:
+     .card.card-catalog.grid-full { --catalog-card-height: 320px; }
+     or inline on the element: style="--catalog-card-height: 20px"
+   ------------------------------------------------------------------------- */
+.card.card-catalog {
+  display: grid; /* override previous flex */
+  grid-template-rows: auto 1fr; /* header + scroller */
+  height: var(--catalog-card-height, auto);
+  min-height: var(--catalog-card-min-height, 200px);
+}
+.card.card-catalog > header {
+  min-height: 0;
+}
+.card.card-catalog .catalog-scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Optional default (edit this exact selector to set a fixed px height) */
+.card.card-catalog.grid-full {
+  --catalog-card-height: 120px;
+}
+
+/* Utility classes if you prefer class-based control */
+.catalog-card-h-200 {
+  --catalog-card-height: 200px;
+}
+.catalog-card-h-320 {
+  --catalog-card-height: 320px;
+}
+.catalog-card-h-480 {
+  --catalog-card-height: 480px;
+}

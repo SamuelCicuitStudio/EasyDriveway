@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ICM · Home</title>
+    <!-- Keep the same style as topology page -->
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/topology.css" />
+    <!-- Home-only styles -->
+    <link rel="stylesheet" href="css/home.css" />
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <div class="frame">
+      <!-- Topbar (kept same as topology) -->
+      <div class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" aria-label="Network">
+              <circle cx="6" cy="12" r="2"></circle>
+              <circle cx="12" cy="6" r="2"></circle>
+              <circle cx="18" cy="12" r="2"></circle>
+              <path
+                d="M8 12 L10 12 L12 8 L16 8 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M14 12 L16 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="grow"></div>
+          <label class="input" aria-label="Quick search">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 4a6 6 0 104.472 10.03l3.249 3.249 1.414-1.414-3.249-3.249A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z"
+                fill="currentColor"
+              />
+            </svg>
+            <input id="quickFilter" type="text" placeholder="Search…" />
+          </label>
+          <div class="row right gap-2">
+            <button id="btnReload" class="btn ghost" title="Reload snapshot">
+              Refresh
+            </button>
+            <button id="logoutBtnLegacy" class="btn danger" title="Log out">
+              Logout
+            </button>
+          </div>
+
+          <div class="title">Interface Control Module</div>
+        </div>
+        <nav class="nav">
+          <a href="/data/home.html" class="active">Home</a>
+          <a href="/data/settings.html">Settings</a>
+          <a href="/data/wifi.html">Networking</a>
+          <a href="/data/topology.html">Topology</a>
+        </nav>
+        <div class="logout"><button id="logoutBtn">Logout</button></div>
+      </div>
+
+      <!-- Hero -->
+      <div class="hero-card">
+        <svg
+          class="home-hero"
+          viewBox="0 0 24 24"
+          width="56"
+          height="56"
+          aria-hidden="true"
+        >
+          <circle cx="6" cy="12" r="2"></circle>
+          <circle cx="12" cy="6" r="2"></circle>
+          <circle cx="18" cy="12" r="2"></circle>
+          <path
+            d="M8 12 L10 12 L12 8 L16 8 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M14 12 L16 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <div class="hero-text">
+          <h2>Home</h2>
+          <p>
+            Read‑only overview of your ICM and network. Settings live on their
+            own page.
+          </p>
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="wrap">
+        <div class="grid-home">
+          <!-- System Snapshot -->
+          <section class="card grid-full">
+            <header class="section-title">
+              <h3>System Snapshot</h3>
+              <span class="badge" id="icmMode">—</span>
+            </header>
+            <div class="metrics" role="list">
+              <div class="metric" role="listitem">
+                <div class="metric-title">Power (V)</div>
+                <div class="metric-value" id="mV">—</div>
+                <div class="kv mini">
+                  <label>State</label>
+                  <div id="mPowerState" class="value">—</div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">Current (A)</div>
+                <div class="metric-value" id="mA">—</div>
+                <div class="kv mini">
+                  <label>Temp (°C)</label>
+                  <div id="mTemp" class="value">—</div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">Paired Devices</div>
+                <div class="metric-value" id="mPeers">—</div>
+                <div class="row smallgap">
+                  <div class="kv mini">
+                    <label>Power</label>
+                    <div id="mCountPower" class="value">—</div>
+                  </div>
+                  <div class="kv mini">
+                    <label>Sensors</label>
+                    <div id="mCountSens" class="value">—</div>
+                  </div>
+                  <div class="kv mini">
+                    <label>Relays</label>
+                    <div id="mCountRelay" class="value">—</div>
+                  </div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">Topology</div>
+                <div class="metric-value" id="mChain">—</div>
+                <div class="row smallgap">
+                  <div class="kv mini">
+                    <label>SEMUX</label>
+                    <div id="mCountSemux" class="value">—</div>
+                  </div>
+                  <div class="kv mini">
+                    <label>REMUX</label>
+                    <div id="mCountRemux" class="value">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <!-- Common Identity & Config -->
+          <section class="card grid-full">
+            <header class="section-title">
+              <h3>Common Identity &amp; Config (All Modules)</h3>
+              <span class="badge badge-info">Read-only</span>
+            </header>
+
+            <div class="metrics" role="list">
+              <div class="metric" role="listitem">
+                <div class="metric-title">Device ID</div>
+                <div class="metric-value mono" id="idDevice">—</div>
+                <div class="kv mini">
+                  <label>Role</label>
+                  <div id="idKind" class="value">—</div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">Firmware</div>
+                <div class="metric-value" id="idSwVer">—</div>
+                <div class="row smallgap">
+                  <div class="kv mini">
+                    <label>HW Rev</label>
+                    <div id="idHwRev" class="value">—</div>
+                  </div>
+                  <div class="kv mini">
+                    <label>Build</label>
+                    <div id="idBuild" class="value">—</div>
+                  </div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">ESP‑NOW</div>
+                <div class="metric-value" id="idChan">—</div>
+                <div class="kv mini">
+                  <label>Default Name</label>
+                  <div id="idDefName" class="value">—</div>
+                </div>
+              </div>
+              <div class="metric" role="listitem">
+                <div class="metric-title">Storage</div>
+                <div class="metric-value mono" id="idCfgPart">—</div>
+                <div class="kv mini">
+                  <label>Log Dir</label>
+                  <div id="idLogDir" class="value mono">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="kv">
+              <div class="row smallgap">
+                <div class="kv">
+                  <label>ICM Log File</label>
+                  <div id="idLogFile" class="value mono">—</div>
+                </div>
+                <div class="kv">
+                  <label>ICM Log Prefix</label>
+                  <div id="idLogPref" class="value mono">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="kv">
+              <h4>Indicator &amp; Feedback Policy</h4>
+              <div class="row smallgap">
+                <div class="kv mini">
+                  <label>LED Disabled</label>
+                  <div id="polLed" class="value">—</div>
+                </div>
+                <div class="kv mini">
+                  <label>Buzzer Disabled</label>
+                  <div id="polBuzz" class="value">—</div>
+                </div>
+                <div class="kv mini">
+                  <label>RGB Active‑Low</label>
+                  <div id="polRgbAL" class="value">—</div>
+                </div>
+                <div class="kv mini">
+                  <label>RGB Feedback</label>
+                  <div id="polRgbFb" class="value">—</div>
+                </div>
+                <div class="kv mini">
+                  <label>Buzzer Active‑High</label>
+                  <div id="polBzAH" class="value">—</div>
+                </div>
+                <div class="kv mini">
+                  <label>Buzzer Feedback</label>
+                  <div id="polBzFb" class="value">—</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Read‑only Settings Catalog (just info) -->
+          <section class="card card-catalog grid-full">
+            <header>
+              <h3>Settable or Controllable Parameters (Read‑only on Home)</h3>
+            </header>
+            <div class="catalog-scroll" id="catalogScroll">
+                <div class="kv">
+                  <h4 class="mono">
+                    ⚙️ ICM — Controllable / Configurable Parameters
+                  </h4>
+                </div>
+
+                <!-- 1. Network & Topology Control -->
+                <div class="kv">
+                  <h4>🧩 1. Network &amp; Topology Control</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>pair_mode</code></td>
+                          <td>
+                            Enable/disable device pairing mode (allow new nodes
+                            to register).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>remove_device(mac)</code></td>
+                          <td>Remove a device from the topology (by MAC).</td>
+                        </tr>
+                        <tr>
+                          <td><code>refresh_topology_interval</code></td>
+                          <td>
+                            Frequency (in seconds) to broadcast topology
+                            updates.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>broadcast_retry_count</code></td>
+                          <td>
+                            Number of retries for critical ESP-NOW
+                            transmissions.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>allowed_roles</code></td>
+                          <td>
+                            Whitelist of device types allowed to pair (e.g.,
+                            PMS, SENSOR, RELAY).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>time_sync_interval</code></td>
+                          <td>
+                            Interval between automatic RTC syncs sent to all
+                            nodes.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 2. Time & Synchronization -->
+                <div class="kv">
+                  <h4>⏱️ 2. Time &amp; Synchronization</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>rtc_sync_source</code></td>
+                          <td>
+                            Choose source: internal RTC (DS3231) or NTP (if
+                            Wi‑Fi connected).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>auto_time_sync</code></td>
+                          <td>
+                            Boolean — auto‑synchronize all slaves periodically.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>timezone_offset</code></td>
+                          <td>
+                            Offset in hours from UTC for all network devices.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>sync_on_boot</code></td>
+                          <td>
+                            Perform full time sync automatically on ICM startup.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 3. Power & Relay Control -->
+                <div class="kv">
+                  <h4>⚡ 3. Power &amp; Relay Control</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>relay_command_mode</code></td>
+                          <td>
+                            Defines how ICM sends relay toggles (direct, group,
+                            or condition‑based).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>manual_override</code></td>
+                          <td>
+                            Enable/disable user manual relay control via web UI.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>pms_auto_switch</code></td>
+                          <td>
+                            Allow PMS to switch power source automatically or
+                            require confirmation.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>relay_default_state</code></td>
+                          <td>
+                            ON/OFF state applied to relays on startup or after
+                            reset.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 4. Environmental Monitoring -->
+                <div class="kv">
+                  <h4>🌡️ 4. Environmental Monitoring</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>icm_temp_threshold</code></td>
+                          <td>
+                            Max internal temperature before triggering cooling
+                            fan.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>icm_temp_warning</code></td>
+                          <td>
+                            Temperature threshold to send warning to PMS or log
+                            fault.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>fan_mode</code></td>
+                          <td>
+                            One of: <code>AUTO</code>, <code>ECO</code>,
+                            <code>FULL</code>, <code>OFF</code>.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>buzzer_mode</code></td>
+                          <td>
+                            One of: <code>ALERT</code>, <code>TOGGLE</code>,
+                            <code>SILENT</code>.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 5. LED & User Feedback -->
+                <div class="kv">
+                  <h4>💡 5. LED &amp; User Feedback</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>rgb_mode</code></td>
+                          <td>
+                            Defines LED behavior (status, topology, or
+                            user‑defined pattern).
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>rgb_color_idle</code></td>
+                          <td>RGB hex value for idle color.</td>
+                        </tr>
+                        <tr>
+                          <td><code>rgb_color_alert</code></td>
+                          <td>RGB hex value when fault or warning occurs.</td>
+                        </tr>
+                        <tr>
+                          <td><code>led_brightness</code></td>
+                          <td>0–255 for intensity.</td>
+                        </tr>
+                        <tr>
+                          <td><code>blink_on_activity</code></td>
+                          <td>
+                            Boolean — LED blinks on ESP‑NOW TX/RX activity.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 6. Data Logging & Storage -->
+                <div class="kv">
+                  <h4>💾 6. Data Logging &amp; Storage</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>logging_enabled</code></td>
+                          <td>Enable/disable SD logging.</td>
+                        </tr>
+                        <tr>
+                          <td><code>log_detail_level</code></td>
+                          <td>
+                            <code>BASIC</code>, <code>INFO</code>,
+                            <code>DEBUG</code>.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>log_rotation_size</code></td>
+                          <td>Max log file size before auto‑rotation.</td>
+                        </tr>
+                        <tr>
+                          <td><code>log_auto_cleanup_days</code></td>
+                          <td>
+                            Automatically remove logs older than this number of
+                            days.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>export_topology_snapshot</code></td>
+                          <td>Force save of the full network map to SD.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 7. Behavior & Automation -->
+                <div class="kv">
+                  <h4>🧠 7. Behavior &amp; Automation</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>auto_reconnect_nodes</code></td>
+                          <td>
+                            Boolean — auto‑ping and re‑link missing devices.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>fault_retry_limit</code></td>
+                          <td>
+                            Number of failed packets before marking a node as
+                            offline.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>priority_override</code></td>
+                          <td>
+                            Define priority for simultaneous CC‑ID or relay
+                            triggers.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>alert_on_new_device</code></td>
+                          <td>
+                            Play sound or blink LED when a new node joins.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>web_update_enable</code></td>
+                          <td>Allow OTA updates via web interface.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 8. Web Interface / User Settings -->
+                <div class="kv">
+                  <h4>🌐 8. Web Interface / User Settings</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>web_theme</code></td>
+                          <td>UI color theme (dark/light/custom).</td>
+                        </tr>
+                        <tr>
+                          <td><code>refresh_interval_ui</code></td>
+                          <td>UI update rate (ms).</td>
+                        </tr>
+                        <tr>
+                          <td><code>admin_password</code></td>
+                          <td>
+                            Changeable password for local configuration access.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>auto_save_config</code></td>
+                          <td>
+                            Automatically save any modified parameter to flash.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 9. Communication & Maintenance -->
+                <div class="kv">
+                  <h4>🪫 9. Communication &amp; Maintenance</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>espnow_channel</code></td>
+                          <td>Wireless channel used for all slaves.</td>
+                        </tr>
+                        <tr>
+                          <td><code>broadcast_mac</code></td>
+                          <td>Custom broadcast address (if needed).</td>
+                        </tr>
+                        <tr>
+                          <td><code>ping_interval</code></td>
+                          <td>
+                            Interval between periodic status requests to all
+                            nodes.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>ping_timeout</code></td>
+                          <td>
+                            Timeout duration before a node is marked
+                            unresponsive.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>reset_command_all</code></td>
+                          <td>Send reset to all modules.</td>
+                        </tr>
+                        <tr>
+                          <td><code>restart_delay</code></td>
+                          <td>
+                            Delay before ICM restarts after OTA or config
+                            change.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 10. Safety & Override -->
+                <div class="kv">
+                  <h4>🔒 10. Safety &amp; Override</h4>
+                  <div class="kv-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><code>safety_lockout</code></td>
+                          <td>
+                            Prevent control commands when unsafe voltage/current
+                            detected.
+                          </td>
+                        </tr>
+                        <tr>
+                          <td><code>max_nodes_allowed</code></td>
+                          <td>Limit number of nodes that can pair.</td>
+                        </tr>
+                        <tr>
+                          <td><code>require_ack</code></td>
+                          <td>Require ACK for all ESP‑NOW commands.</td>
+                        </tr>
+                        <tr>
+                          <td><code>fault_alert_enable</code></td>
+                          <td>Enable sound/LED notification on node fault.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="kv">
+                  <strong>✅ Summary:</strong>
+                  <p>
+                    The ICM acts as the <em>administrator</em> — it can
+                    configure time, fan, LED, and relay behaviors; manage node
+                    pairing, topology, and network health; control PMS power
+                    logic and environmental thresholds; and handle logging,
+                    automation, and UI preferences.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mock must be loaded first so home.js can fall back to it when API fails -->
+    <script src="mock/home.mock.js"></script>
+    <script src="js/home.js" type="module"></script>
+  </body>
+</html>

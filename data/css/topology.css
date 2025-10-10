@@ -841,9 +841,9 @@ input[type="text"] {
 
 /* Card container */
 .card.card-selected {
-  display: flex;
-  flex-direction: column;
-  min-height: 0; /* allow inner scroll areas */
+  height: var(--card-selected-h) !important;
+  flex: 0 0 var(--card-selected-h) !important;
+  min-height: 0 !important;
 }
 .card.card-selected > header {
   flex: 0 0 auto; /* sticky/header zone */
@@ -1307,14 +1307,20 @@ input[type="text"] {
 /* =========================================================
    PAIR / REMOVE PANEL
    ========================================================= */
-.card-pair .pair-body {
-  display: flex;
-  justify-content: center; /* center the two KV blocks */
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: nowrap; /* keep on one line when space allows */
-  padding: 4px 2px;
-  overflow: hidden; /* override .scrollable: no inner scrollbars */
+:root {
+  /* Change these numbers whenever you want (e.g., 7px to test) */
+  --card-selected-h: 500px;
+  --card-pair-h: 220px;
+}
+.card.card-pair {
+  height: var(--card-pair-h) !important;
+  flex: 0 0 var(--card-pair-h) !important;
+  min-height: 0 !important;
+}
+.card.card-pair .pair-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 .card-pair .kv {
   background: linear-gradient(180deg, #0e1628, #0b1323);
@@ -1524,13 +1530,6 @@ a:focus-visible,
    - Edit --selectedH and --pairH to exact pixel heights
    ========================================================= */
 
-:root {
-  /* Exact heights (px) — these are definitive */
-  --selectedH: 465px; /* e.g., 420px, 500px, etc. */
-  --pairH: 260px; /* e.g., 160px, 220px, etc.  */
-  --rightGap: 6px; /* visual gap between them   */
-}
-
 @media (min-width: 1281px) {
   /* Keep other cards untouched; only re-map right column cards
      to share the same column space (rows 1..2) */
@@ -1557,13 +1556,11 @@ a:focus-visible,
   .card.card-selected > header {
     flex: 0 0 auto;
   }
-  .card.card-selected #selInfo,
-  .card.card-selected #selNone {
+  .card.card-selected > #selInfo,
+  .card.card-selected > #selNone {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
-    overscroll-behavior: contain;
-    padding-right: 6px;
   }
 
   /* PAIR/REMOVE — bottom block with definitive height */
