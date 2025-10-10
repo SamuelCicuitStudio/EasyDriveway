@@ -1459,7 +1459,7 @@
       let titleText = `${kindLabel(b.kind)} · ${macDisp}`;
       if (isSemu || isRemu) {
         const total = isSemu ? getSemuxCount(macDisp) : getRemuxCount(macDisp);
-        titleText = `${isSemu ? "S" : "R"} ${
+        titleText = `${isSemu ? "-" : "-"} ${
           (b.vIndex ?? 0) + 1
         } / ${total} · ${macDisp}`;
       }
@@ -1925,7 +1925,7 @@
     const pill = document.createElement("button");
     pill.className = "pill " + cls;
     const fullMac = macFormatColon(p.mac || "");
-    pill.innerHTML = `<span class="pill-title">${titleText}</span><span class="pill-mac mono">${fullMac}</span>`;
+    pill.innerHTML = `<span class="pill-title">${titleText} . ${fullMac}</span>`;
 
     // Draggable only if placeable (SENSOR/RELAY or their emulators)
     pill.draggable = isChainPlaceable(p.type);
@@ -2318,6 +2318,9 @@
       redrawLane(); // <— was renderChain(), fixed
       renderPalette();
       updateSelectionPanel(null, null);
+      if (typeof unselectAll === "function") unselectAll(); // clears bricks/pills & right panel
+      // Also ensure Selected panel shows "None"
+      if (typeof clearSelectionPanel === "function") clearSelectionPanel();
       showToast("Topology imported.");
     } catch (e) {
       console.error(e);

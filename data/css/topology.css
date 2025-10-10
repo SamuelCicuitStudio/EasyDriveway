@@ -1210,30 +1210,76 @@ input[type="text"] {
   opacity: 0.85;
 }
 /* =========================================================
-   EMULATOR VISIBILITY (SEMUX / REMUX) — Modals only
-   The JS sets data-emu="semux" or "remux" on .modal-body
+   EMULATOR (SEMUX / REMUX) — Final optimized rules
+   Place this block near the END of topology.css so it wins the cascade
    ========================================================= */
 
-/* Default: hide emulator-only controls everywhere */
-#selInfo .emu-only,
-#selInfo .emu-only-semux,
-#selInfo .emu-only-remux,
+/* ---------- A) Modals: emulator-only visibility (modals only) ---------- */
+/* Hide by default */
 .modal-body .emu-only,
 .modal-body .emu-only-semux,
-.modal-body .emu-only-remux {
+.modal-body .emu-only-remux,
+.modal-body .emu-semux-only,
+.modal-body .emu-remux-only {
   display: none !important;
 }
 
-/* Show SEMUX blocks only when the form carries data-emu="semux" */
+/* Show SEMUX-specific bits when the form carries data-emu="semux" */
 .modal-body[data-emu="semux"] .emu-only,
-.modal-body[data-emu="semux"] .emu-only-semux {
+.modal-body[data-emu="semux"] .emu-only-semux,
+.modal-body[data-emu="semux"] .emu-semux-only {
   display: block !important;
 }
 
-/* Show REMUX blocks only when the form carries data-emu="remux" */
+/* Show REMUX-specific bits when the form carries data-emu="remux" */
 .modal-body[data-emu="remux"] .emu-only,
-.modal-body[data-emu="remux"] .emu-only-remux {
+.modal-body[data-emu="remux"] .emu-only-remux,
+.modal-body[data-emu="remux"] .emu-remux-only {
   display: block !important;
+}
+
+/* Back-compat: if older JS sets data-emu="true", at least reveal generic .emu-only */
+.modal-body[data-emu="true"] .emu-only {
+  display: block !important;
+}
+
+/* ---------- B) Palette: tint emulator parent pills ---------- */
+.palette .parent-pill.t-semux {
+  border-color: color-mix(
+    in oklab,
+    var(--cSemux, #3ad1ff),
+    transparent 45%
+  ) !important;
+  box-shadow: 0 0 0 1px
+    color-mix(in oklab, var(--cSemux, #3ad1ff), transparent 70%) inset;
+}
+.palette .parent-pill.t-remux {
+  border-color: color-mix(
+    in oklab,
+    var(--cRemux, #ff9b3a),
+    transparent 45%
+  ) !important;
+  box-shadow: 0 0 0 1px
+    color-mix(in oklab, var(--cRemux, #ff9b3a), transparent 70%) inset;
+}
+
+/* ---------- C) Palette: selected channel highlight (single authoritative set) ---------- */
+.palette .emu-chan {
+  position: relative;
+}
+.palette .emu-chan.selected {
+  border-color: var(--accent, #18c99b) !important;
+  box-shadow: 0 0 0 2px rgba(24, 201, 155, 0.35) inset !important;
+}
+.palette .emu-chan.selected::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-style: solid;
+  border-width: 0 12px 12px 0;
+  border-color: transparent var(--accent, #18c99b) transparent transparent;
+  border-top-right-radius: 8px;
 }
 
 /* =========================================================
